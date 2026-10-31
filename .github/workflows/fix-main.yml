@@ -1,0 +1,20 @@
+name: fix-main
+
+on:
+  workflow_dispatch:
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Force push to main
+        run: |
+          git config user.name "SirAsta"
+          git config user.email "afonsofqro@gmail.com"
+          git push --force "https://x-access-token:${{ secrets.TOKEN_FORMERCURYBECAUSEHESAFAGGOTNIGGER }}@github.com/SirAsta/module.git" HEAD:main
