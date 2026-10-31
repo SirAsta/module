@@ -4,9 +4,18 @@ A Roblox executor targeting the latest client version.
 
 ## Version
 
-[version-latest]
+[version-5a21b87bbc2641cf]
 
-The codebase was reworked a bit and updated to the latest version, including a swapped Luau VM and current offsets.
+## Changelog
+
+### Latest
+- Reworked and modernized the codebase.
+- Updated to the latest Roblox client version.
+- Integrated an updated Luau VM engine.
+- Refreshed offsets and pointer encryption to match the current version.
+- Hardened the teleport handler.
+- Improved thread identity handling.
+- Cleaned up the codebase.
 
 ## Credits
 
