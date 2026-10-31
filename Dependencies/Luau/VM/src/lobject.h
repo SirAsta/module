@@ -50,9 +50,7 @@ typedef union GCObject GCObject;
 // constructor writes `byte [cl+2], 8`, and luaC_traversestack tests
 // `byte [uv], 3` (iswhite) on open upvalues.
 #define CommonHeader \
-    uint8_t marked; \
-    uint8_t tt; \
-    uint8_t memcat;
+    uint8_t marked; /* offset 0 */ \
     uint8_t memcat; /* offset 1 */ \
     uint8_t tt; /* offset 2 */
 // clang-format on
@@ -324,16 +322,17 @@ typedef TValue* StkId; // index to stack elements
 /*
 ** String headers for string table
 */
-struct TString {
-    CommonHeader;
-    uint16_t lowBits;
-    int16_t atom;
-    TString* next;
-    TSTRING_HASH_ENC<unsigned int> hash;
-    unsigned int len;
-    char data[1];
+struct TString
+{
+    CommonHeader;                                   /* 0x00 */
+    unsigned char gap_03[0x1];                      /* 0x03 */
+    uint16_t atomflag;                              /* 0x04 */
+    int16_t atom;                                   /* 0x06 */
+    TString* next;                                  /* 0x08 */
+    TSTRING_HASH_ENC<unsigned int> hash;            /* 0x10 */
+    unsigned int len;                               /* 0x14 */
+    char data[1];                                   /* 0x18 */
 };
-
 
 
 #define getstr(ts) (ts)->data
@@ -388,24 +387,25 @@ typedef struct LuaNode
 //   the API setter at 0x268D990 writes `byte [h+4]`                 -> safeenv 0x04
 //   lua_unref's registry lookup: `1 << byte [h+6]`, `[h+20h]` node,
 //   `[h+18h]` array, `[h+8]` sizearray; traversestack gclist `[h+28h]`.
-struct LuaTable {
-    CommonHeader;
-    uint8_t tmcache;
-    uint8_t lsizenode;
-    uint8_t readonly;
-    uint8_t safeenv;
-    uint8_t nodemask8;
-    int sizearray;
-    union {
+struct LuaTable
+{
+    CommonHeader;                                   /* 0x00 */
+    unsigned char tmcache;                          /* 0x03 */
+    unsigned char safeenv;                          /* 0x04 */
+    unsigned char nodemask8;                        /* 0x05 */
+    unsigned char lsizenode;                        /* 0x06 */
+    unsigned char readonly;                         /* 0x07 */
+    int sizearray;                                  /* 0x08 */
+    union                                           /* 0x0C */
+    {
         int lastfree;
         int aboundary;
     };
-    LuaTable* metatable;
-    LuaNode* node;
-    GCObject* gclist;
-    TValue* array;
+    LuaTable* metatable;                            /* 0x10 */
+    TValue* array;                                  /* 0x18 */
+    LuaNode* node;                                  /* 0x20 */
+    GCObject* gclist;                               /* 0x28 */
 };
-
 // (asserts for this struct live in the consolidated block further down)
 
 struct Udata
@@ -480,49 +480,78 @@ struct FeedbackVectorSlot
 struct LocVar;
 
 // clang-format off
-struct Proto {
-    CommonHeader;
-    unsigned char nups;
-    unsigned char numparams;
-    unsigned char flags;
-    unsigned char is_vararg;
-    unsigned char maxstacksize;
-    PROTO_LINEINFO_ENC<unsigned char*> lineinfo;
-    PROTO_UPVALUES_ENC<TString**> upvalues;
-    unsigned int* codeentry;
-    PROTO_DEBUGNAME_ENC<TString*> debugname;
-    GCObject* gclist;
-    PROTO_SOURCE_ENC<TString*> source;
-    uint8_t heatflags;
-    PROTO_TYPEINFO_ENC<unsigned char*> typeinfo;
-    void* execdata;
-    uintptr_t exectarget;
-    PROTO_P_ENC<Proto**> p;
-    PROTO_LOCVARS_ENC<struct LocVar*> locvars;
-    uint32_t heatcount;
-    PROTO_USERDATA_ENC<uint64_t*> userdata;
-    PROTO_ABSLINEINFO_ENC<int*> abslineinfo;
-    TValue* k;
-    unsigned int* code;
-    PROTO_DEBUGINSN_ENC<unsigned char*> debuginsn;
-    int sizeupvalues;
-    int linedefined;
-    int sizelocvars;
-    int bytecodeid;
-    int linegaplog2;
-    int sizep;
-    int sizek;
-    int sizetypeinfo;
-    int sizecode;
-    int sizelineinfo;
-    struct FeedbackVectorSlot* feedbackvec;
-    int feedbackvecsize;
-    int funid;
-    Proto* optimized;
-    Proto* deoptimized;
-    uint64_t cost;
+struct Proto
+{
+    // 02c37bc layout. Reordered again against 740 - the pointer block and the
+    // whole int tail both moved, so none of the 740 notes carry over. Deltas:
+    //   flags      0x06 -> 0x03    is_vararg  0x03 -> 0x04
+    //   numparams  0x04 -> 0x05    nups       0x05 -> 0x06
+    //   source     0x18 -> 0x08    locvars    0x58 -> 0x10
+    //   lineinfo   0x10 -> 0x18    debugname  0x60 -> 0x20
+    //   gclist     0x78 -> 0x30    userdata   0x50 -> 0x38
+    //   typeinfo   0x08 -> 0x40    k          0x40 -> 0x48
+    //   code       0x48 -> 0x50    debuginsn  0x68 -> 0x58
+    //   execdata   0x30 -> 0x60    exectarget 0x38 -> 0x68
+    //   abslineinfo 0x20 -> 0x70   codeentry  0x80 -> 0x78
+    //   upvalues   0x70 -> 0x80
+    //
+    // 742 (cec3ad5889b447cf): reordered again; matches the Achilles 742 dump.
+    // Verified in IDA for this build:
+    //   luau_execute entry: `mov r10, [p+20h]`            -> k 0x20
+    //   LOP_BREAK: `sub rax, [p+28h]` / debuginsn at p+0x80 (VMValue2)
+    //                                                     -> code 0x28, debuginsn 0x80
+    //   capability read (0x4185DD0): `p+0x40`, XOR decode -> userdata 0x40 (VMValue3)
+    //
+    // 743 (7a0c6d10fcb34a2c): reordered again; taken from the Achilles 743 dump,
+    // not yet checked in IDA. k / code / userdata kept their 742 offsets.
+    // 744 (0.744.0.7441077): close to upstream order again; all three 744
+    // dumps agree. Verified in IDA: luaF_getlocal reads locvars `[p+20h]`
+    // (VMValue1, 0x18-byte LocVar) and sizelocvars `[p+0ACh]`; luaG_getline
+    // reads lineinfo `[p+40h]` (XOR, VMValue3), abslineinfo `p+58h - [p+58h]`
+    // (VMValue2), linegaplog2 `byte [p+9Ch]`; luaC_traverseproto reads source
+    // `[p+8]` (VMValue1), upvalues `[p+10h]` (XOR), debugname `[p+60h]`, and
+    // p `[p+30h]` raw (the Hyperion dump's PROTO_P_ENC is plain this build);
+    // luaF_newproto stores debuginsn as `-&field` (VMValue4); luau_execute
+    // loads k `[p+48h]` / code `[p+50h]`.
+    CommonHeader;                                   /* 0x00 */
+    unsigned char nups;                             /* 0x03 */
+    unsigned char is_vararg;                        /* 0x04 */
+    unsigned char maxstacksize;                     /* 0x05 */
+    unsigned char numparams;                        /* 0x06 */
+    unsigned char flags;                            /* 0x07 */
+    PROTO_SOURCE_ENC<TString*> source;              /* 0x08 */
+    PROTO_UPVALUES_ENC<TString**> upvalues;         /* 0x10 */
+    GCObject* gclist;                               /* 0x18 */
+    PROTO_LOCVARS_ENC<struct LocVar*> locvars;      /* 0x20 */
+    unsigned int* codeentry;                        /* 0x28 */
+    Proto** p;                                      /* 0x30 */
+    PROTO_USERDATA_ENC<void*> userdata;             /* 0x38 */
+    PROTO_LINEINFO_ENC<unsigned char*> lineinfo;    /* 0x40 */
+    TValue* k;                                      /* 0x48 */
+    unsigned int* code;                             /* 0x50 */
+    PROTO_ABSLINEINFO_ENC<int*> abslineinfo;        /* 0x58 */
+    PROTO_DEBUGNAME_ENC<TString*> debugname;        /* 0x60 */
+    PROTO_DEBUGINSN_ENC<unsigned char*> debuginsn;  /* 0x68 */
+    void* execdata;                                 /* 0x70 */
+    uintptr_t exectarget;                           /* 0x78 */
+    PROTO_TYPEINFO_ENC<unsigned char*> typeinfo;    /* 0x80 */
+    int sizetypeinfo;                               /* 0x88 */
+    int sizeupvalues;                               /* 0x8C */
+    int linedefined;                                /* 0x90 */
+    int sizek;                                      /* 0x94 */
+    int bytecodeid;                                 /* 0x98 */
+    int linegaplog2;                                /* 0x9C */
+    int sizelineinfo;                               /* 0xA0 */
+    int sizecode;                                   /* 0xA4 */
+    int sizep;                                      /* 0xA8 */
+    int sizelocvars;                                /* 0xAC */
+    struct FeedbackVectorSlot* feedbackvec;         /* 0xB0 */
+    int feedbackvecsize;                            /* 0xB8 */
+    int funid;                                      /* 0xBC */
+    Proto* optimized;                               /* 0xC0 */
+    Proto* deoptimized;                             /* 0xC8 */
+    uint64_t cost;                                  /* 0xD0 */
 };
-
 // clang-format on
 
 // (asserts for this struct live in the consolidated block further down)
@@ -568,28 +597,48 @@ typedef struct UpVal
 ** Closures
 */
 
-struct Closure {
-    CommonHeader;
-    unsigned char isC;
-    unsigned char nupvalues;
-    unsigned char preload;
-    unsigned char stacksize;
-    GCObject* gclist;
-    LuaTable* env;
-    union {
-        struct {
-            lua_CFunction f;
-            CLOSURE_CONT_ENC<lua_Continuation> cont;
-            CLOSURE_DEBUGNAME_ENC<TString*> debugname;
-            TValue upvals[1];
-        } c;
-        struct {
-            Proto* p;
-            TValue uprefs[1];
+struct Closure
+{
+    // 02c37bc: preload and isC swapped back (preload 0x03, isC 0x06). Verified in
+    // IDA - luaB_getfenv (0x269F940) takes the LUA_TFUNCTION branch on
+    // `byte [cl+6]`, so isC is at 0x06 on this build.
+    // 742: isC back at 0x03 (luaB_getfenv 0x25E8DA0 tests `byte [cl+3]`), and the
+    // C union is (f, cont, debugname) again; matches the Achilles 742 dump.
+    // 743: nupvalues/stacksize swapped and the C union is (f, debugname, cont);
+    // from the Achilles 743 dump, not yet checked in IDA.
+    // 744: C union is (debugname, cont, f). Verified in IDA - luau_execute's
+    // C-call path does `mov rax, [cl+28h]` / `mov rcx, L` / icall, and
+    // lua_pushcclosurek (0x269DC..) stores cont as XOR at +0x20 and the
+    // interned debugname raw at +0x18 (the Hyperion dump's
+    // CLOSURE_DEBUGNAME_ENC is plain this build).
+    CommonHeader;                                   /* 0x00 */
+    unsigned char isC;                              /* 0x03 */
+    unsigned char preload;                          /* 0x04 */
+    unsigned char nupvalues;                        /* 0x05 */
+    unsigned char stacksize;                        /* 0x06 */
+    unsigned char gap_07[0x1];                      /* 0x07 */
+    GCObject* gclist;                               /* 0x08 */
+    struct LuaTable* env;                           /* 0x10 */
+    union                                           /* 0x18 */
+    {
+        struct
+        {
+            struct Proto* p;                        /* 0x18 */
+            TValue uprefs[1];                       /* 0x20 */
         } l;
+        // The C-closure order REVERSED against 740: it was (f, cont, debugname),
+        // it is now (debugname, cont, f). Environment.cpp swaps c.f on the game's
+        // __index/__namecall at setup, so if inject starts crashing immediately
+        // after a client update, re-check this union before anything else.
+        struct
+        {
+            TString* debugname;                     /* 0x18 */
+            CLOSURE_CONT_ENC<lua_Continuation> cont;/* 0x20 */
+            lua_CFunction f;                        /* 0x28 */
+            TValue upvals[1];                       /* 0x30 */
+        } c;
     };
 };
-
 // (asserts for this struct live in the consolidated block further down)
 
 #define iscfunction(o) (ttype(o) == LUA_TFUNCTION && clvalue(o)->isC)

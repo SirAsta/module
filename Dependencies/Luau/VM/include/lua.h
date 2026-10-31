@@ -94,21 +94,36 @@ namespace Hyperion {
 //   actor                   0x90 -> 0x98
 //   capabilities            0xA0 -> 0x50
 //   Shared: threadCount 0x20 -> 0x18, engineContext 0x18 -> 0x20
-struct RobloxExtraSpace {
-    char gap_0[0x18];
-    std::shared_ptr<void> shared;
-    char gap_1[0x18];
-    std::weak_ptr<uintptr_t> actor;
-    char gap_2[0x10];
-    uint32_t identity;
-    char gap_3[0xC];
-    void* identity_script_context;
-    char gap_4[0x8];
-    uint64_t capabilities;
-    std::weak_ptr<uintptr_t> script;
-    char gap_5[0x20];
-};
+struct RobloxExtraSpace
+{
+    struct Shared
+    {
+        void* needToFree;                   /* 0x00 */
+        unsigned char gap_08[0x10];         /* 0x08 - RBX::Intrusive::Set allThreads {count, head} */
+        int threadCount;                    /* 0x18 */
+        unsigned char gap_1C[0x4];          /* 0x1C */
+        void* engineContext;                /* 0x20 */
+        void* scriptVmState;                /* 0x28 */
+        void* script_context;               /* 0x30 */
+    };
 
+    RobloxExtraSpace* next;                 /* 0x00 */
+    void* _container;                       /* 0x08 */
+    RobloxExtraSpace* prev;                 /* 0x10 */
+    std::shared_ptr<Shared> shared;         /* 0x18 */
+    unsigned char gap_28[0x8];              /* 0x28 - intrusive ref, copied with ++ */
+    std::weak_ptr<uintptr_t> InstanceDefiningCapabilities; /* 0x30 */
+    unsigned char gap_40[0x10];             /* 0x40 - weak_ptr, not copied */
+    uint64_t capabilities;                  /* 0x50 */
+    void* flyweightPtr;                     /* 0x58 */
+    uint32_t identity;                      /* 0x60 - heads RBX::Identity */
+    unsigned char gap_64[0xC];              /* 0x64 */
+    void* identity_script_context;          /* 0x70 - Identity::ScriptContext */
+    unsigned char gap_78[0x10];             /* 0x78 */
+    std::weak_ptr<uintptr_t> source;        /* 0x88 - dump calls it "script" */
+    std::weak_ptr<uintptr_t> actor;         /* 0x98 */
+    unsigned char gap_A8[0x10];             /* 0xA8 */
+};
 
 // These are the fields the executor writes into the engine's own extra space, so
 // a silent drift here does not fail loudly - it just quietly writes past the
