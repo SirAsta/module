@@ -19,6 +19,7 @@
 #include <string.h>
 
 LUAU_FASTFLAG(LuauFastpcall)
+LUAU_FASTFLAGVARIABLE(LuauPcallErrorContinuationReentry)
 
 // keep max stack allocation request under 1GB
 #define MAX_STACK_SIZE (int(1024 / sizeof(TValue)) * 1024 * 1024)
@@ -46,23 +47,33 @@ struct lua_jmpbuf
 #define LUAU_LONGJMP(buf, code) longjmp(buf, code)
 #endif
 
+// Roblox 0.738's global_State has no errorjmp field - it only survives in
+// lstate.h as a compile shim appended past the end of the struct. Reading or
+// writing g->errorjmp against a live Roblox state is an out-of-bounds access.
+//
+// The chain is per-thread by nature (it is a setjmp stack for the calling OS
+// thread), so a thread_local head is a faithful replacement and keeps the
+// executor's own protected calls entirely out of Roblox's memory. Roblox's
+// engine-side throws are unaffected: those go through Offsets::luaD_throw.
+static thread_local lua_jmpbuf* g_executorErrorJmp = nullptr;
+
 int luaD_rawrunprotected(lua_State* L, Pfunc f, void* ud)
 {
     lua_jmpbuf jb;
-    jb.prev = L->global->errorjmp;
+    jb.prev = g_executorErrorJmp;
     jb.status = 0;
-    L->global->errorjmp = &jb;
+    g_executorErrorJmp = &jb;
 
     if (LUAU_SETJMP(jb.buf) == 0)
         f(L, ud);
 
-    L->global->errorjmp = jb.prev;
+    g_executorErrorJmp = jb.prev;
     return jb.status;
 }
 
 l_noret luaD_throw(lua_State* L, int errcode)
 {
-    if (lua_jmpbuf* jb = L->global->errorjmp)
+    if (lua_jmpbuf* jb = g_executorErrorJmp)
     {
         jb->status = errcode;
         LUAU_LONGJMP(jb->buf, 1);
@@ -429,7 +440,7 @@ void luaD_seterrorobj(lua_State* L, int errcode, StkId oldtop)
     L->top = oldtop + 1;
 }
 
-void luaD_preparefinalizestate(lua_State* L, lua_State* co, bool resulttrue)
+void luaD_preparefinalizestate(lua_State* L, lua_State* co, FinallyResult finresult)
 {
     LUAU_ASSERT(co->finalizers);
 
@@ -437,29 +448,28 @@ void luaD_preparefinalizestate(lua_State* L, lua_State* co, bool resulttrue)
     L->top++;
     setnvalue(L->top, double(luaH_getn(co->finalizers)));
     L->top++;
-    setbvalue(L->top, resulttrue ? 1 : 0);
+    setnvalue(L->top, double(finresult));
     L->top++;
 
     co->finalizers = nullptr; // we have taken the list for processing
 }
 
-void luaD_preparefinalize(lua_State* L, lua_State* co)
+void luaD_preparefinalize(lua_State* L, lua_State* co, FinallyResult finresult)
 {
-    bool resulttrue = co->status == LUA_OK;
-    int nres = resulttrue ? cast_int(co->top - co->base) : 1;
+    int nres = finresult == FinallyResult::Finished ? cast_int(co->top - co->base) : 1;
 
     if (!lua_checkstack(L, nres + 3))
         luaG_runerror(L, "too many results to invoke finalizer");
 
-    luaD_preparefinalizestate(L, co, resulttrue);
+    luaD_preparefinalizestate(L, co, finresult);
     lua_xmove(co, L, nres);
 }
 
-int luaD_runfinalizers(lua_State* L, bool toclose, bool returnstatus)
+int luaD_runfinalizers(lua_State* L, bool returnstatus)
 {
     int results = lua_gettop(L) - 4;
     int position = lua_tointeger(L, 3);
-    int status = lua_toboolean(L, 4);
+    int status = lua_tointeger(L, 4);
 
     if (position != 0)
     {
@@ -477,7 +487,7 @@ int luaD_runfinalizers(lua_State* L, bool toclose, bool returnstatus)
         lua_rawgeti(L, 2, position);
 
         // push status string
-        lua_pushstring(L, toclose ? "cancelled" : (status == 1 ? "finished" : "error"));
+        lua_pushstring(L, status == FinallyResult::Cancelled ? "cancelled" : (status == FinallyResult::Finished ? "finished" : "error"));
 
         // copy results over
         for (int i = 0; i < results; i++)
@@ -488,9 +498,12 @@ int luaD_runfinalizers(lua_State* L, bool toclose, bool returnstatus)
     }
 
     if (returnstatus)
+    {
+        setbvalue(L->base + (4 - 1), status != FinallyResult::Error); // Replace numerical status with a boolean
         return results + 1;
+    }
 
-    if (status == 0)
+    if (status == FinallyResult::Error)
         lua_error(L);
 
     return results;
@@ -710,6 +723,13 @@ static void resume_handle(lua_State* L, void* ud)
     restore_stack_limit(L);
 
     int n = cl->c.cont(L, status);
+
+    if (FFlag::LuauPcallErrorContinuationReentry && L->status == SCHEDULED_REENTRY)
+    {
+        // continuation scheduled a reentry into a nested call
+        resume_continue(L, /* basecioffset */ 0);
+        return;
+    }
 
     if (L->status != LUA_OK)
         return;

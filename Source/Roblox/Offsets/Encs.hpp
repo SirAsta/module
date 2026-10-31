@@ -81,20 +81,21 @@ using vmval3 = VMValue3<T>;
 template<typename T>
 using vmval4 = VMValue4<T>;
 
-#define CLOSURE_CONT_ENC vmval2
-#define CLOSURE_DEBUGNAME_DEPRECATED_ENC vmval2
-#define LSTATE_STACKSIZE_ENC vmval1
-#define PROTO_ABSLINEINFO_ENC vmval2
-#define PROTO_DEBUGINSN_ENC vmval4
-#define PROTO_DEBUGNAME_ENC vmval4
-#define PROTO_LINEINFO_ENC vmval2
-#define PROTO_LOCVARS_ENC vmval4
-#define PROTO_SOURCE_ENC vmval3
-#define PROTO_TYPEINFO_ENC vmval2
-#define PROTO_UPVALUES_ENC vmval3
-#define PROTO_USERDATA_ENC vmval2
-#define TSTRING_HASH_ENC vmval3
-#define UDATA_META_ENC vmval3
+#define PROTO_LINEINFO_ENC      VMValue3
+#define PROTO_LOCVARS_ENC       VMValue3
+#define PROTO_UPVALUES_ENC      VMValue4
+#define PROTO_DEBUGINSN_ENC     VMValue3
+#define PROTO_TYPEINFO_ENC      VMValue2
+#define PROTO_SOURCE_ENC        VMValue1
+#define PROTO_ABSLINEINFO_ENC   VMValue4
+#define PROTO_DEBUGNAME_ENC     VMValue3
+#define PROTO_USERDATA_ENC      VMValue1
+#define UDATA_META_ENC          VMValue2
+#define CLOSURE_DEBUGNAME_ENC   VMValue3
+#define CLOSURE_CONT_ENC        VMValue3
+#define TSTRING_HASH_ENC        VMValue2
+#define LSTATE_STACKSIZE_ENC    VMValue2
+#define PROTO_P_ENC             VMValue0
 
 // dont scroll down
 
