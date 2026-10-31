@@ -5,6 +5,8 @@
 #include "lapi.h"
 #include <cstring>
 
+LUAU_FASTFLAGVARIABLE(LuauCIProto)
+
 namespace Execution
 {
     template<typename T>
