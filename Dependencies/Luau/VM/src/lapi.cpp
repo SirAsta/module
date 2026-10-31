@@ -20,8 +20,9 @@
 #include <string.h>
 
 LUAU_FASTFLAG(LuauGcTraceUdata)
+// 743 owns these two here; lvmexecute.cpp no longer defines any flags.
 LUAU_FASTFLAGVARIABLE(LuauNewPointerEncode)
-LUAU_FASTFLAGVARIABLE(DebugLuauCoroutineFinally)
+LUAU_FASTFLAGVARIABLE(LuauCoroutineFinally)
 LUAU_FASTFLAGVARIABLE(LuauFrozenMetaButterfly)
 
 /*
@@ -78,7 +79,8 @@ const char* luau_ident = "$Luau: Copyright (C) 2019-2024 Roblox Corporation $\n"
         L->top = p; \
     }
 
-static LuaTable* getcurrenv(lua_State* L)
+// 743 exposes this to lclass.cpp through lapi.h, so it is no longer static.
+LuaTable* getcurrenv(lua_State* L)
 {
     if (L->ci == L->base_ci) // no enclosing function?
         return L->gt;        // use global table as environment
@@ -789,6 +791,8 @@ void lua_pushcclosurek(lua_State* L, lua_CFunction fn, const char* debugname, in
     Closure* cl = luaF_newCclosure(L, nup, getcurrenv(L));
     cl->c.f = fn;
     cl->c.cont = cont;
+
+    // 737 removed debugname_DEPRECATED; the managed TString* is the only field.
     cl->c.debugname = debugname ? luaS_new(L, debugname) : nullptr;
 
     L->top -= nup;
@@ -1240,13 +1244,19 @@ int lua_callyieldable(lua_State* L, int nargs, int nresults)
     Closure* cl = clvalue(L->ci->func);
     api_check(L, cl->c.cont);
 
+    // Read the continuation before the call, not after it: a hookfunction
+    // dispatcher runs the user hook in here, and a hook that restores or
+    // re-hooks its own target rewrites cl->c.cont mid-call (back to the
+    // original's null), which made the post-call read jump to 0x0.
+    const lua_Continuation cont = cl->c.cont;
+
     lua_call(L, nargs, nresults);
 
     // yielding means we need to propagate yield; resume will call continuation function later
     if (isyielded(L))
         return C_CALL_YIELD;
 
-    return cl->c.cont(L, LUA_OK);
+    return cont(L, LUA_OK);
 }
 
 int lua_pcallyieldable(lua_State* L, int nargs, int nresults, int errfunc)
@@ -1254,6 +1264,7 @@ int lua_pcallyieldable(lua_State* L, int nargs, int nresults, int errfunc)
     api_check(L, iscfunction(L->ci->func));
     Closure* cl = clvalue(L->ci->func);
     api_check(L, cl->c.cont);
+    const lua_Continuation cont = cl->c.cont; // see lua_callyieldable: read before the call
     api_check(L, nargs + 1 <= L->top - L->base);
     api_check(L, errfunc >= 0 && errfunc <= L->top - L->base);
 
@@ -1288,7 +1299,7 @@ int lua_pcallyieldable(lua_State* L, int nargs, int nresults, int errfunc)
     // the called function has completed synchronously, continuation can use non-protected calls again
     L->ci->flags &= ~LUA_CALLINFO_HANDLE;
 
-    return cl->c.cont(L, status);
+    return cont(L, status);
 }
 
 int lua_status(lua_State* L)
@@ -1318,21 +1329,43 @@ int lua_costatus(lua_State* L, lua_State* co)
 
 int lua_hasfinalizers(lua_State* L)
 {
-    LUAU_ASSERT(FFlag::DebugLuauCoroutineFinally);
+    LUAU_ASSERT(FFlag::LuauCoroutineFinally);
 
     return L->finalizers ? 1 : 0;
 }
 
 static int runfinalizery(lua_State* L)
 {
-    lua_State* co = lua_tothread(L, 1);
-    api_check(L, co != nullptr && co != L);
-    api_check(L, L->global == co->global);
-    api_check(L, co->status != LUA_YIELD && co->status != LUA_BREAK);
-    api_check(L, co->finalizers != nullptr);
+    lua_State* co = lua_tothread(L, lua_upvalueindex(1));
+    FinallyResult result = (FinallyResult)lua_tointeger(L, lua_upvalueindex(2));
 
-    luaD_preparefinalize(L, co);
-    return luaD_runfinalizers(L, /* toclose */ false, /* returnstatus */ false);
+    if (!co)
+        luaG_runerror(L, "finalizer function has already been called");
+
+    if (co == L)
+        luaG_runerror(L, "cannot finalize running thread");
+
+    if (!co->finalizers)
+        luaG_runerror(L, "coroutine has no pending finalizers");
+
+    // luaD_runfinalizers expects a thread, followed by the finalizer state
+    lua_settop(L, 0);
+    lua_pushvalue(L, lua_upvalueindex(1));
+
+    // clear the thread upvalue so that future calls will error immediately
+    setnilvalue(index2addr(L, lua_upvalueindex(1)));
+
+    if (result == FinallyResult::Cancelled)
+    {
+        luaD_preparefinalizestate(L, co, result);
+        lua_resetthread(co);
+    }
+    else
+    {
+        luaD_preparefinalize(L, co, result);
+    }
+
+    return luaD_runfinalizers(L, /* returnstatus */ false);
 }
 
 static int runfinalizercont(lua_State* L, int status)
@@ -1340,22 +1373,37 @@ static int runfinalizercont(lua_State* L, int status)
     if (status != LUA_OK)
         luaD_throw(L, status);
 
-    return luaD_runfinalizers(L, /* toclose */ false, /* returnstatus */ false);
+    return luaD_runfinalizers(L, /* returnstatus */ false);
 }
 
-void lua_pushfinalizerfunction(lua_State* L)
+void lua_pushfinalizerfunction(lua_State* L, lua_State* co, int toclose)
 {
-    LUAU_ASSERT(FFlag::DebugLuauCoroutineFinally);
+    LUAU_ASSERT(FFlag::LuauCoroutineFinally);
 
-    luaC_threadbarrier(L);
     api_check(L, L->status == LUA_OK);
+    api_check(L, co != nullptr && co != L);
+    api_check(L, L->global == co->global);
+    api_check(L, co->finalizers != nullptr);
 
-    lua_pushcclosurek(L, runfinalizery, "finalize", 0, runfinalizercont);
+    if (toclose)
+        api_check(L, co->status == LUA_OK || co->status == LUA_YIELD);
+    else
+        api_check(L, co->status != LUA_YIELD && co->status != LUA_BREAK);
+
+    // push thread
+    luaC_threadbarrier(L);
+    ensure_stack(L, 1);
+    setthvalue(L, L->top, co);
+    api_incr_top(L);
+
+    lua_pushinteger(L, toclose ? FinallyResult::Cancelled : (co->status == LUA_OK ? FinallyResult::Finished : FinallyResult::Error));
+
+    lua_pushcclosurek(L, runfinalizery, "finalize", 2, runfinalizercont);
 }
 
 void lua_addfinalizer(lua_State* L, lua_State* co, int idx)
 {
-    LUAU_ASSERT(FFlag::DebugLuauCoroutineFinally);
+    LUAU_ASSERT(FFlag::LuauCoroutineFinally);
 
     api_check(L, co != nullptr);
     api_check(L, !lua_isnoneornil(L, idx));

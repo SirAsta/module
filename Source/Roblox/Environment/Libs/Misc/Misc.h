@@ -74,6 +74,28 @@ namespace misc
         return 1;
     }
 
+    inline bool TryWriteTlsIdentity(int identity, uint64_t caps)
+    {
+        __try
+        {
+            uintptr_t thread_tls = *reinterpret_cast<uintptr_t*>(Main::Identity1::IdentityPointer);
+            if (!thread_tls)
+                return false;
+
+            uintptr_t idpointer = SkidBase::GetIdentityStruct(thread_tls);
+            if (!idpointer)
+                return false;
+
+            *reinterpret_cast<uint64_t*>(idpointer) = static_cast<uint64_t>(identity);
+            *reinterpret_cast<uint64_t*>(idpointer + Main::Identity2::Capabilities) = caps;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     inline int setthreadidentity(lua_State* L)
     {
         luaL_checktype(L, 1, LUA_TNUMBER);
@@ -86,12 +108,7 @@ namespace misc
         L->userdata->identity = identity;
         L->userdata->capabilities = caps;
 
-        uintptr_t thread_tls = *reinterpret_cast<uintptr_t*>(Main::Identity1::IdentityPointer);
-        uintptr_t idpointer = SkidBase::GetIdentityStruct(thread_tls);
-        if (idpointer != 0) {
-            *reinterpret_cast<uint64_t*>(idpointer) = identity;
-            *reinterpret_cast<uint64_t*>(idpointer + Main::Identity2::Capabilities) = caps;
-        }
+        TryWriteTlsIdentity(identity, caps);
 
         return 0;
     }

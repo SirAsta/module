@@ -17,8 +17,8 @@
 
 #include <string.h>
 
-LUAU_FASTFLAG(LuauCallFeedback)
 LUAU_FASTFLAGVARIABLE(LuauCostModel)
+LUAU_FASTFLAGVARIABLE(LuauLoadRemapOptionalUserdata)
 
 template<typename T>
 struct TempBuffer
@@ -217,6 +217,19 @@ static void resolveImportSafe(lua_State* L, LuaTable* env, TValue* k, uint32_t i
     }
 }
 
+static uint8_t remapUserdataType(uint8_t type, uint8_t* userdataRemapping, uint32_t count)
+{
+    LUAU_ASSERT(FFlag::LuauLoadRemapOptionalUserdata);
+    uint8_t tag = type & ~LBC_TYPE_OPTIONAL_BIT;
+    uint8_t optional = type & LBC_TYPE_OPTIONAL_BIT;
+    uint32_t index = uint32_t(tag - LBC_TYPE_TAGGED_USERDATA_BASE);
+
+    if (index < count)
+        return userdataRemapping[index] | optional;
+
+    return type;
+}
+
 static void remapUserdataTypes(char* data, size_t size, uint8_t* userdataRemapping, uint32_t count)
 {
     size_t offset = 0;
@@ -232,10 +245,17 @@ static void remapUserdataTypes(char* data, size_t size, uint8_t* userdataRemappi
         // Skip two bytes of function type introduction
         for (uint32_t i = 2; i < typeSize; i++)
         {
-            uint32_t index = uint32_t(types[i] - LBC_TYPE_TAGGED_USERDATA_BASE);
+            if (FFlag::LuauLoadRemapOptionalUserdata)
+            {
+                types[i] = remapUserdataType(types[i], userdataRemapping, count);
+            }
+            else
+            {
+                uint32_t index = uint32_t(types[i] - LBC_TYPE_TAGGED_USERDATA_BASE);
 
-            if (index < count)
-                types[i] = userdataRemapping[index];
+                if (index < count)
+                    types[i] = userdataRemapping[index];
+            }
         }
 
         offset += typeSize;
@@ -247,10 +267,17 @@ static void remapUserdataTypes(char* data, size_t size, uint8_t* userdataRemappi
 
         for (uint32_t i = 0; i < upvalCount; i++)
         {
-            uint32_t index = uint32_t(types[i] - LBC_TYPE_TAGGED_USERDATA_BASE);
+            if (FFlag::LuauLoadRemapOptionalUserdata)
+            {
+                types[i] = remapUserdataType(types[i], userdataRemapping, count);
+            }
+            else
+            {
+                uint32_t index = uint32_t(types[i] - LBC_TYPE_TAGGED_USERDATA_BASE);
 
-            if (index < count)
-                types[i] = userdataRemapping[index];
+                if (index < count)
+                    types[i] = userdataRemapping[index];
+            }
         }
 
         offset += upvalCount;
@@ -260,10 +287,17 @@ static void remapUserdataTypes(char* data, size_t size, uint8_t* userdataRemappi
     {
         for (uint32_t i = 0; i < localCount; i++)
         {
-            uint32_t index = uint32_t(data[offset] - LBC_TYPE_TAGGED_USERDATA_BASE);
+            if (FFlag::LuauLoadRemapOptionalUserdata)
+            {
+                data[offset] = char(remapUserdataType(uint8_t(data[offset]), userdataRemapping, count));
+            }
+            else
+            {
+                uint32_t index = uint32_t(data[offset] - LBC_TYPE_TAGGED_USERDATA_BASE);
 
-            if (index < count)
-                data[offset] = userdataRemapping[index];
+                if (index < count)
+                    data[offset] = userdataRemapping[index];
+            }
 
             offset += 2;
             readVarInt(data, size, offset);
@@ -633,7 +667,18 @@ static int loadsafe(
             }
         }
 
-        for (Instruction* instruction = p->code; instruction < p->code + p->sizecode;)
+        // Udata direct-access rewrite: disabled in this copy of the VM.
+        //
+        // Everything we load was compiled with BytecodeEncoder (Execution.cpp), so
+        // p->code holds Roblox-encoded opcodes (OpcodeLookupTable[op * 227]), not
+        // LuauOpcode values. This pass decodes them as plain opcodes, so it gets
+        // instruction lengths wrong, reads random words as constant indices, and
+        // hands a non-string to luaS_updateatom - access violation on every load.
+        // 0.733 gated it behind LuauUdataDirectAccess6 (off); 0.743 removed the
+        // gate. It is an optimisation only (GETUDATAKS/SETUDATAKS/NAMECALLUDATA),
+        // so skipping it keeps the pre-0.743 behaviour that worked.
+        constexpr bool kRewriteUdataAccess = false;
+        for (Instruction* instruction = p->code; kRewriteUdataAccess && instruction < p->code + p->sizecode;)
         {
             int targetOp = -1;
 
@@ -754,12 +799,26 @@ static int loadsafe(
             for (uint32_t j = 0; j < p->feedbackvecsize; j++)
             {
                 uint8_t slottype = read<uint8_t>(data, size, offset);
-                LUAU_ASSERT(slottype == LFT_CALLTARGET);
+
                 FeedbackVectorSlot& slot = p->feedbackvec[j];
                 slot.kind = static_cast<FeedbackVectorSlotKind>(slottype);
-                slot.call_target.pc = readVarInt(data, size, offset);
-                slot.call_target.proto = 0;
-                slot.call_target.hits = 0;
+
+                if (slottype == LFT_CALLTARGET)
+                {
+                    slot.call_target.pc = readVarInt(data, size, offset);
+                    slot.call_target.proto = 0;
+                    slot.call_target.hits = 0;
+                }
+                else if (slottype == LFT_CONSTRUCT)
+                {
+                    slot.construct.shape = readVarInt(data, size, offset);
+                    slot.construct.classid = 0;
+                    slot.construct.match = LCM_MISMATCH;
+                }
+                else
+                {
+                    LUAU_ASSERT(!"unknown feedback slot type");
+                }
             }
         }
 

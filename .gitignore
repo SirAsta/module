@@ -1,0 +1,14 @@
+.vs/
+.vs
+Release/
+*.dll
+*.pdb
+*.obj
+*.lib
+*.exp
+*.log
+supq/
+supQ/
+supQModule.rar
+*.rar
+AGENTS.md
