@@ -17,8 +17,6 @@ namespace
         return true;
     }
 
-    // Brute-force fallback: the ScriptContext holds the main Lua state behind
-    // one of the four pointer encodings. Probe every qword in the first page.
     lua_State* FindLuaStateForInstance(uintptr_t sc)
     {
         if (!sc)

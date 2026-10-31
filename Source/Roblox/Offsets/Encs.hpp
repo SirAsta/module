@@ -71,7 +71,6 @@ public:
     void Set(const T& Value) { operator=(Value); }
 };
 
-// 739 pointer-encoding slots: vmvalN maps 1:1 onto VMValueN
 template<typename T>
 using vmval1 = VMValue1<T>;
 template<typename T>
@@ -96,8 +95,6 @@ using vmval4 = VMValue4<T>;
 #define TSTRING_HASH_ENC        VMValue2
 #define LSTATE_STACKSIZE_ENC    VMValue2
 #define PROTO_P_ENC             VMValue0
-
-// dont scroll down
 
 
 

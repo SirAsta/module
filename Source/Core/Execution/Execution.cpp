@@ -199,7 +199,6 @@ namespace Execution
         if (nameLen == 0 || nameLen >= 0x100)
             return 0;
 
-        // Job type name pointer lives at 0xF8 per the dump; 0x18/0x118 kept as fallback
         static constexpr uintptr_t kNameOffsets[] = { 0x18, 0xF8, 0x118 };
 
         for (uintptr_t current = jobsStart; current < jobsEnd; current += 0x10)

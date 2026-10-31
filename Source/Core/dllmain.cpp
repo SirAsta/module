@@ -11,8 +11,6 @@
 
 #include "TeleportHandler.hpp"
 
-// Todo
-// waitinghybirdscriptsjob
 template<typename T>
 T read(uintptr_t address, uintptr_t offset = 0) {
     return *reinterpret_cast<T*>(address + offset);

@@ -16,7 +16,6 @@ namespace signals_lib
 {
     namespace off
     {
-        // this is very rushed and not very optimized will improve later gl if u can read this
         constexpr uintptr_t o_next = 0x10;
         constexpr uintptr_t o_act = 0x20;
         constexpr uintptr_t o_swrap = 0x30;

@@ -182,7 +182,6 @@ namespace crypt_lib {
         out.assign(reinterpret_cast<const char*>(dst.data()), dst.size()); return true;
     }
 
-    // well
     inline int base64encode(lua_State* L) { size_t len=0; const char* d=luaL_checklstring(L,1,&len); std::string o=base64_encode_bytes(reinterpret_cast<const uint8_t*>(d),len); lua_pushlstring(L,o.data(),o.size()); return 1; }
     inline int base64decode(lua_State* L) { size_t len=0; const char* d=luaL_checklstring(L,1,&len); std::string o; if(!base64_decode_string(std::string(d,len),o)) luaL_error(L,"invalid base64"); lua_pushlstring(L,o.data(),o.size()); return 1; }
     inline int base64_encode(lua_State* L) { return base64encode(L); }

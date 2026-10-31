@@ -15,7 +15,7 @@ namespace Roblox {
 }
 
 namespace Offsets {
-    inline const uintptr_t OpcodeLookupTable = Main::Functions::OpcodeLookupTable; // no idea where to even place it
+    inline const uintptr_t OpcodeLookupTable = Main::Functions::OpcodeLookupTable;
     namespace Luau {
         inline const uintptr_t LuaO_NilObject = Main::Miscellaneous::LuaNil;
         inline const uintptr_t LuaH_DummyNode = Main::Miscellaneous::LuaDummy;
