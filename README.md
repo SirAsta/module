@@ -10,6 +10,7 @@ A Roblox executor targeting the latest client version.
 
 - updated to latest
 - added ui
+- added injector
 - fixed some stuff
 
 ## Credits
