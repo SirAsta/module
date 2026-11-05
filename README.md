@@ -20,3 +20,6 @@ An AI assistant was used for help with a few parts of this project, but the code
 Asta me obviously for updating and what not
 
 Ravage for the Skidbase source [if you contributed to skidbase lemme know and il add you here]
+
+
+new yub x public am I right? 
