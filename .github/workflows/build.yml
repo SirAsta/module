@@ -19,5 +19,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Module-dll
-          path: Release/Module.dll
+          name: skid-dll
+          path: Release/skid.dll

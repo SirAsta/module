@@ -281,7 +281,7 @@ int main() {
 	SetConsoleTitleA(oxorany("Zynova injector"));
 
 	const std::filesystem::path binDir = Filesystem->GetExecutableDirectory();
-	const std::filesystem::path modulePath = binDir / oxorany("Module.dll");
+	const std::filesystem::path modulePath = binDir / oxorany("skid.dll");
 
 	Logging->Info(Debug, oxorany("Current Directory: %s"), binDir.string().c_str());
 
@@ -302,7 +302,7 @@ int main() {
 		Logging->LastError(Debug, oxorany("OpenProcess"));
 		return Logging->FailAttach();
 	}
-	if (uintptr_t existing = Utilities->GetModuleBase(process, oxorany("Module.dll"))) {
+	if (uintptr_t existing = Utilities->GetModuleBase(process, oxorany("skid.dll"))) {
 		Logging->Ok(Release, oxorany("Already Attached"));
 		Logging->Detail(Debug, oxorany("Already Attached, Module @ 0x%p"), reinterpret_cast<void*>(existing));
 		CloseHandle(process);
@@ -464,7 +464,7 @@ int main() {
 	}
 
 	uintptr_t moduleBase = 0;
-	while (!(moduleBase = Utilities->GetModuleBase(process, oxorany("Module.dll")))) {
+	while (!(moduleBase = Utilities->GetModuleBase(process, oxorany("skid.dll")))) {
 		Sleep(50);
 	}
 
@@ -482,7 +482,7 @@ int main() {
 		WriteProcessMemory(process, reinterpret_cast<PVOID>(notifyList + 8), &last, sizeof(uintptr_t), nullptr);
 	}
 
-	Logging->Detail(Debug, oxorany("%s @ 0x%p"), oxorany("Module.dll"), reinterpret_cast<void*>(moduleBase));
+	Logging->Detail(Debug, oxorany("%s @ 0x%p"), oxorany("skid.dll"), reinterpret_cast<void*>(moduleBase));
 	Logging->Ok(Both, oxorany("Attached"));
 
 	CloseHandle(process);
