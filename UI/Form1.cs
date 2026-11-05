@@ -16,7 +16,9 @@ namespace UI
 
         private void button1_Click(object sender, EventArgs e)
         {
-            string path = Path.Combine(Application.StartupPath, "injector.exe");
+            string path = Path.Combine(Application.StartupPath, "skidjector.exe");
+            if (!File.Exists(path))
+                path = Path.Combine(Application.StartupPath, "injector.exe");
             Process.Start(path);
         }
 
