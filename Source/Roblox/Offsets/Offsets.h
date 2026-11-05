@@ -12,19 +12,19 @@ namespace Main {
     }
 
     namespace Functions {
-        inline const uintptr_t Print = Rebase(0x1C50690);
-        inline const uintptr_t GetGlobalState = Rebase(0x41D0080);
-        inline const uintptr_t LuauExecute = Rebase(0x262FB30);
-        inline const uintptr_t LuaDThrow = Rebase(0x25F6560);
-        inline const uintptr_t OpcodeLookupTable = Rebase(0x71CFBA0);
-        inline const uintptr_t PushInstance = Rebase(0x41B76C0);
+        inline const uintptr_t Print = Rebase(0x1ca9a30);
+        inline const uintptr_t GetGlobalState = Rebase(0x4274c30);
+        inline const uintptr_t LuauExecute = Rebase(0x26789e0);
+        inline const uintptr_t LuaDThrow = Rebase(0x26360e0);
+        inline const uintptr_t OpcodeLookupTable = Rebase(0x735b280);
+        inline const uintptr_t PushInstance = Rebase(0x42594c0);
     }
 
     namespace Miscellaneous {
-        inline const uintptr_t FakeDatamodelPOINTER = Rebase(0x8D06600);
-        inline const uintptr_t LuaNil = Rebase(0x6735848);
-        inline const uintptr_t LuaDummy = Rebase(0x67352E8);
-        inline const uintptr_t TargetFPS = Rebase(0x7FD07C8);
+        inline const uintptr_t FakeDatamodelPOINTER = Rebase(0x8e4d7b8);
+        inline const uintptr_t LuaNil = Rebase(0x68ba8e8);
+        inline const uintptr_t LuaDummy = Rebase(0x68b9f58);
+        inline const uintptr_t TargetFPS = Rebase(0x81715b0);
     }
 
     namespace Offsets {
