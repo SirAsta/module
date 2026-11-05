@@ -28,38 +28,38 @@ namespace Main {
     }
 
     namespace Offsets {
-        inline const uintptr_t DataModel = 0x1F8;
+        inline const uintptr_t DataModel = 0x1F0;
         inline const uintptr_t ScriptContext = 0x440;
         inline const uintptr_t Children = 0x70;
-        inline const uintptr_t GameLoaded = 0x638;
+        inline const uintptr_t GameLoaded = 0x588;
     }
 
     namespace Scheduler {
-        inline const uintptr_t TaskScheduler = Rebase(0x8C9D698);
+        inline const uintptr_t TaskScheduler = Rebase(0x8e4d7b8);
         inline const uintptr_t JobStart = 0xC8;
         inline const uintptr_t JobEnd = 0xD0;
         inline const uintptr_t JobTypeName = 0x18;
     }
 
     namespace ExtraSpace {
-        inline const uintptr_t RequireBypass = 0xB50;
+        inline const uintptr_t RequireBypass = 0xB71;
     }
 
     namespace Identity1 {
-        inline const uintptr_t IdentityPointer = Rebase(0x83B6678);
-        inline const uintptr_t GetTlsPointer = Rebase(0xC700);
+        inline const uintptr_t IdentityPointer = Rebase(0x855cf68);
+        inline const uintptr_t GetTlsPointer = Rebase(0xc700);
     }
 
     namespace Identity2 {
-        inline const uintptr_t GetCapabilities = Rebase(0x1C905D0);
+        inline const uintptr_t GetCapabilities = Rebase(0x1cea140);
         inline const uintptr_t Capabilities = 0x30;
     }
 
     namespace SignalOffsets {
-        inline const uintptr_t FireMouseClick = Rebase(0x3C00500);
-        inline const uintptr_t FireRightMouseClick = Rebase(0x3C006A0);
-        inline const uintptr_t FireMouseHoverEnter = Rebase(0x3C01A70);
-        inline const uintptr_t FireMouseHoverLeave = Rebase(0x3C01C10);
-        inline const uintptr_t FireProximityPrompt = Rebase(0x30A8980);
+        inline const uintptr_t FireMouseClick = Rebase(0x3c6daf0);
+        inline const uintptr_t FireRightMouseClick = Rebase(0x3c6dc90);
+        inline const uintptr_t FireMouseHoverEnter = Rebase(0x3c6f060);
+        inline const uintptr_t FireMouseHoverLeave = Rebase(0x3c6f200);
+        inline const uintptr_t FireProximityPrompt = Rebase(0x30fd840);
     }
 }
