@@ -13,7 +13,6 @@
 
 #include "luaconf.h"
 #include <Roblox/Offsets/Encs.hpp>
-#include <Encryptions.hpp>
 
 
 // option for multiple returns in `lua_pcall' and `lua_call'

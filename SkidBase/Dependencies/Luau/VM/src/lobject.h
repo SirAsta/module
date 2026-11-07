@@ -4,7 +4,7 @@
 
 #include "lua.h"
 #include "lcommon.h"
-#include <Offsets.hpp>
+#include <Roblox/Offsets/Encs.hpp>
 
 /*
 ** Union of all collectible objects
