@@ -8,10 +8,6 @@ A Roblox executor targeting the latest client version.
 
 ## Changelog
 
-- updated to future
-- added ui
-- added injector
-- fixed some stuff
 - updated offsets and structs
 - updated luau
 - renamed dll to skid.dll
