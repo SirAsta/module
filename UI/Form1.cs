@@ -26,17 +26,18 @@ namespace UI
         {
             try
             {
-                TcpClient client = new TcpClient();
-                client.Connect("127.0.0.1", 9002);
-                string script = richTextBox1.Text;
-                byte[] data = Encoding.UTF8.GetBytes(script);
-                NetworkStream stream = client.GetStream();
-                stream.Write(data, 0, data.Length);
-                stream.Close();
-                client.Close();
+                using (TcpClient client = new TcpClient())
+                {
+                    client.Connect("127.0.0.1", 9002);
+                    string script = richTextBox1.Text;
+                    byte[] data = Encoding.UTF8.GetBytes(script);
+                    NetworkStream stream = client.GetStream();
+                    stream.Write(data, 0, data.Length);
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                MessageBox.Show("Failed to execute: " + ex.Message);
             }
         }
     }
