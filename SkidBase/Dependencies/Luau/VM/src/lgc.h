@@ -72,22 +72,7 @@
 
 #define luaC_white(g) cast_to(uint8_t, ((g)->currentwhite) & WHITEBITS)
 
-// The executor runs on Roblox's lua_State and shares Roblox's heap, and Roblox
-// runs its own collector over it. This VM copy must never self-trigger a step:
-//
-//   1. luaC_step calls markudatadirectfields(), and udatadirectfields does not
-//      exist in 738 - it survives only as a compile shim appended past the end
-//      of global_State, so marking it reads out of bounds.
-//   2. Two collectors marking and sweeping one heap corrupts it regardless.
-//
-// lua_createtable calls luaC_checkGC before every allocation, so with the real
-// condition this fired on the first lua_newtable inside luaL_sandboxthread.
-// Our allocations are accounted in Roblox's totalbytes and our thread is
-// reachable from Roblox's registry, so Roblox collects them for us - disabling
-// self-triggered steps does not leak.
-//
-// Original: #define luaC_needsGC(L) (L->global->totalbytes >= L->global->GCthreshold)
-#define luaC_needsGC(L) (false)
+#define luaC_needsGC(L) (L->global->totalbytes >= L->global->GCthreshold)
 
 #define luaC_checkGC(L) \
     { \

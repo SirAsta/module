@@ -2,8 +2,6 @@
 // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
 #pragma once
 
-#include <cstddef> // offsetof, for the 738 layout guards below
-
 #include "lobject.h"
 #include "ltm.h"
 #include "ludata.h"
@@ -19,39 +17,19 @@
 #define BASIC_STACK_SIZE (2 * LUA_MINSTACK)
 
 // clang-format off
-// Roblox 0.740 order: {size, nuse, hash} - back to upstream Luau, the exact
-// reverse of 739's {hash, nuse, size}.
-// Verified in IDA: every string-table bucket lookup in the VM does
-//   mov edx, [g+18h] ; dec edx ; and rdx, hash ; mov rax, [g+20h]
-// and strt sits at global_State+0x18, so `size` is strt+0x00 and `hash` is
-// strt+0x08. With size/hash swapped, luaS_newlstr masks the hash with a pointer
-// and dereferences an integer.
-// sizeof is 16 either way, which is why global_State's asserts never catch it.
-// 02c37bc: back to upstream order - hash leads, size trails.
-// 742 (cec3ad5889b447cf): {size, nuse, hash} again. Verified in IDA - the three
-// string-table bucket lookups (0x25C2F2B, 0x25C40C2, 0x25C5A15) all do
-//   mov edx, [g+18h] ; dec edx ; and rdx, hash ; mov rax, [g+20h]
-// with strt at global_State+0x18.
-// 743 (7a0c6d10fcb34a2c): back to upstream {hash, size, nuse}, strt at
-// global_State+0x50; from the Achilles 743 dump, not yet checked in IDA.
-// 744 (0.744.0.7441077): {hash, nuse, size}, strt at global_State+0x00.
-// Verified in IDA - the string bucket lookup does
-//   movsxd rcx, [g+0Ch] ; dec rcx ; and rcx, hash ; mov rax, [g+0]
-// and luaS_resize writes the new size to [g+0Ch] and the new array to [g+0].
-typedef struct stringtable
-{
-    TString** hash;    /* offset 0 */
-    unsigned int nuse; /* offset 8 */
-    int size;          /* offset C */
-} stringtable;
-static_assert(offsetof(stringtable, hash) == 0x0, "stringtable::hash moved");
-static_assert(offsetof(stringtable, nuse) == 0x8, "stringtable::nuse moved");
-static_assert(offsetof(stringtable, size) == 0xC, "stringtable::size moved");
-static_assert(sizeof(stringtable) == 0x10, "stringtable must be 16 bytes");
+// Structure For Hash(f0ea5da9412f4e35)
+
+struct stringtable {
+    int size; /* (0) (0x0) */
+    uint32_t nuse; /* (4) (0x4) */
+    TString** hash; /* (8) (0x8) */
+};
+static_assert(sizeof(stringtable) == 16, "sizeof(stringtable) == 16");
+
 // clang-format on
 
 /*
-** informations about a call
+** information about a call
 **
 ** the general Lua stack frame structure is as follows:
 ** - each function gets a stack frame, with function "registers" being stack slots on the frame
@@ -79,38 +57,30 @@ static_assert(sizeof(stringtable) == 0x10, "stringtable must be 16 bytes");
 ** the `flags` field in CallInfo contains internal execution flags that are important for pcall/etc, see LUA_CALLINFO_*
 */
 // clang-format off
-// 0.740: base and p swapped back relative to 739. Verified in luau_execute at
-// 0x26ACA3C-0x26ACA4F: `mov rax,[ci+8]` (func), `mov rcx,[ci+18h]` then
-// `mov r10,[rcx+40h]` (ci->p->k), `mov r12,[ci+20h]` (savedpc), and the native
-// entry test `test byte ptr [ci+2Ch], 4` (flags & LUA_CALLINFO_NATIVE).
-// 02c37bc swapped base and top against 740 (base now leads).
-// 742: {base, top, p, func}. Verified in IDA - luau_execute entry reads
-// `[ci+10h]` (p) then `[p+20h]` (k), `[ci+18h]` (func), `[ci+20h]` (savedpc),
-// tests `byte [ci+2Ch], 4`; the stack check in luaB_* compares L->top against
-// `[ci+8]` (top); the capability walk (0x4185DD0) reads func at ci+0x18.
-// 743: func and top swapped back {base, func, p, top}; from the Achilles 743
-// dump, not yet checked in IDA.
-struct CallInfo
-{
-    TValue* base;                               /* 0x00 */
-    TValue* func;                               /* 0x08 */
-    Proto* p;                                   /* 0x10 */
-    TValue* top;                                /* 0x18 */
-    union                                       /* 0x20 */
-    {
+// Structure For Hash(f0ea5da9412f4e35)
+struct CallInfo {
+    TValue* base; /* (0) (0x0) */
+    TValue* top; /* (8) (0x8) */
+    TValue* func; /* (16) (0x10) */
+    Proto* p; /* (24) (0x18) */
+    union {
         const Instruction* savedpc;
         int errfunc;
-    };
-    int nresults;                               /* 0x28 */
-    unsigned int flags;                         /* 0x2C */
+    }; /* (32) (0x20) */
+    int nresults; /* (40) (0x28) */
+    unsigned int flags; /* (44) (0x2C) */
 };
+static_assert(sizeof(CallInfo) == 48, "sizeof(CallInfo) == 48");
 // clang-format on
 
 #define LUA_CALLINFO_RETURN (1 << 0) // should the interpreter return after returning from this callinfo? first frame must have this set
 #define LUA_CALLINFO_HANDLE (1 << 1) // should the error thrown during execution get handled by continuation from this callinfo? func must be C
 #define LUA_CALLINFO_NATIVE (1 << 2) // should this function be executed using execution callback for native code
-#define LUA_CALLINFO_OPYIELD (1 << 3) // call frame has yielded on a non-call opcode and requires luaV_finishop
+#define LUA_CALLINFO_OPYIELD (1 << 3) // call frame has yielded on a non-call opcode and requires luau_finishop
 #define LUA_CALLINFO_PCALL (1 << 4)   // call frame was setup by a synthetic protected call and requires luau_pospcallsuccess
+
+#define TAGGED_PAGESET_BASE (LUA_TSTRING)
+#define TAGGED_PAGESET_SIZE (LUA_T_COUNT - TAGGED_PAGESET_BASE)
 
 #define curr_func(L) (clvalue(L->ci->func))
 #define ci_func(ci) (clvalue((ci)->func))
@@ -205,6 +175,12 @@ struct lua_ExecutionCallbacks
         size_t* count
     ); // called to get the execution counter data and count {uint32_t, uint32_t, uint64_t}
     Proto* (*inlinefunction)(lua_State* L, Closure* caller, Closure* target, uint32_t pc); // called when inlining threshold is reached
+
+    // called when GC marks the function unless opted out with PEF_EXECLOCKED to examine if an action on a function will be needed later
+    void (*examinefunction)(lua_State* L, Proto* proto);
+    // called when GC cycle has been completed and the collector is paused
+    // functions previoulsy recorded by 'examinefunction' can be processed safely
+    void (*commitfunctions)(lua_State* L);
 };
 
 struct lua_UdataDirectAccessData
@@ -217,10 +193,110 @@ struct lua_UdataDirectAccessData
     lua_UserdataDirectNamecall namecall;
 };
 
+struct LuauPageset
+{
+    struct lua_Page* freepages[LUA_SIZECLASSES]; // cage GCO free pages, per size class
+    struct lua_Page* allpages;                   // all cage GCO pages (sweep target)
+    struct lua_Page* sweeppage;                  // sweep cursor
+};
+
 /*
 ** `global state', shared by all threads of this state
 */
 // clang-format off
+//typedef struct global_State
+//{
+//    stringtable strt; // hash table for strings
+//
+//    lua_Alloc frealloc;   // function to reallocate memory
+//    void* ud;             // auxiliary data to `frealloc'
+//
+//    uint8_t currentwhite;
+//    uint8_t gcstate; // state of garbage collector
+//
+//    GCObject* gray;      // list of gray objects
+//    GCObject* grayagain; // list of objects to be traversed atomically
+//    GCObject* weak;      // list of weak tables (to be cleared)
+//
+//    size_t GCthreshold;                       // when totalbytes >= GCthreshold, run GC step
+//    size_t totalbytes;                        // number of bytes currently allocated
+//
+//    int gcgoal;                               // see LUAI_GCGOAL
+//    int gcstepmul;                            // see LUAI_GCSTEPMUL
+//    int gcstepsize;                           // see LUAI_GCSTEPSIZE
+//
+//    struct lua_Page* freepages[LUA_SIZECLASSES]; // free page linked list for each size class for non-collectable objects
+//    struct lua_Page* freegcopages[LUA_SIZECLASSES]; // free page linked list for each size class for collectable objects
+//    struct lua_Page* allpages; // page linked list with all pages for all non-collectable object classes (available with LUAU_ASSERTENABLED)
+//    struct lua_Page* allgcopages; // page linked list with all pages for all collectable object classes
+//    struct lua_Page* sweepgcopage; // position of the sweep in `allgcopages'
+//
+//    struct lua_State* mainthread;
+//    UpVal uvhead; // head of double-linked list of all open upvalues
+//    struct LuaTable* mt[LUA_T_COUNT]; // metatables for basic types
+//    TString* ttname[LUA_T_COUNT]; // names for basic types
+//    TString* tmname[TM_N]; // array with tag-method names
+//
+//    lua_CageAlloc cagealloc;
+//    void* cageud;
+//    struct lua_Page* freegcopages_cage[LUA_SIZECLASSES]; // cage GCO free pages, per size class
+//    struct lua_Page* allgcopages_cage; // all cage GCO pages (sweep target)
+//    struct lua_Page* sweepgcopage_cage; // sweep cursor
+//
+//    TValue pseudotemp; // storage for temporary values used in pseudo2addr
+//
+//    TValue registry; // registry table, used by lua_ref and LUA_REGISTRYINDEX
+//    int registryfree; // next free slot in registry
+//
+//    struct lua_jmpbuf* errorjmp; // jump buffer data for longjmp-style error handling
+//
+//    uint64_t rngstate; // PCG random number generator state
+//    uint64_t ptrenckey[4]; // pointer encoding key for display (remove when unreferenced)
+//
+//    lua_Callbacks cb;
+//
+//    lua_ExecutionCallbacks ecb;
+//
+//    alignas(16) uint8_t ecbdata[LUA_EXECUTION_CALLBACK_STORAGE];
+//
+//    // Set of userdata __index/__newindex/__namecall metamethods for a direct access
+//    lua_UdataDirectAccessData udatadirect[UTAG_INTERNAL_LIMIT];
+//
+//    LuauPageset taggedpageset[TAGGED_PAGESET_SIZE]; // Page sets which only hold allocations for a specific GCO type
+//    int sweeppageset; // Which array is being swept
+//
+//    size_t memcatbytes[LUA_MEMORY_CATEGORIES]; // total amount of memory used by each memory category
+//
+//    void (*udatagc[LUA_UTAG_LIMIT])(lua_State*, void*); // for each userdata tag, a gc callback to be called immediately before freeing memory
+//    lua_UserdataMark udatamark[LUA_UTAG_LIMIT]; // gc callbacks allowing the embedder to mark underlying native objects for the given userdata
+//    LuaTable* udatamt[LUA_UTAG_LIMIT]; // metatables for tagged userdata
+//
+//    TValue weakregistry; // backing table for lua_weakref/lua_weakunref/lua_getweakref
+//    int weakregistryfree; // next free slot in weakregistry
+//    int weakregistrytop; // top of the weakregistry (highest used index)
+//    lua_EmbedderGc embeddergc; // embedder GC callback for keeping weak references alive
+//
+//    TString* lightuserdataname[LUA_LUTAG_LIMIT]; // names for tagged lightuserdata
+//
+//    // per-tag direct field dispatch tables; NULL until first field is registered for that tag
+//    struct LuaTable* udatadirectfields[UTAG_INTERNAL_LIMIT];
+//
+//    // cached closures for fast protected calls
+//    struct Closure* builtinPcall;
+//    struct Closure* builtinXpcall;
+//
+//    uint64_t ptrenckeynew[8]; // pointer encoding key for display
+//    bool ptrencactive;
+//
+//    GCStats gcstats;
+//    uint32_t lastprotoid;
+//    uint32_t lastclassid;
+//
+//#ifdef LUAI_GCMETRICS
+//    GCMetrics gcmetrics;
+//#endif
+//} global_State;
+
 struct registryfree_value
 {
 private:
@@ -258,209 +334,86 @@ public:
 };
 
 typedef registryfree_value registryfree_t;
+typedef registryfree_value RegistryFree;
 
+// Structure For Hash(f0ea5da9412f4e35)
 
-
-// Roblox 0.740 layout (version-2366ba214ec740ca). The head is reshuffled again
-// from 739 - and this time it lands back on plain upstream Luau field order, so
-// nothing from the 739 header carries over. Take the .739.bak seriously before
-// assuming any single field "did not move".
-//
-// Verified in IDA:
-//   strt 0x18  - bucket lookups do `mov edx,[g+18h]; dec edx; and rdx,hash;
-//                mov rax,[g+20h]`, i.e. strt.size +0x18 / strt.hash +0x20
-//   GCthreshold 0x50 / totalbytes 0x58 - the luaC_step guard at 0x42A6D37 reads
-//                `[g+50h]`, compares `[g+58h]` and calls luaC_step (0x26838F0)
-//   grayagain 0x38 - upvalue re-link in 0x42A6D60
-//   freepages 0x1E0 - page allocator 0x269C740 / 0x269CE00 index `[g+rax*8+1E0h]`
-//   cb 0x640   - LOP_BREAK tests `[g+650h]` (cb.debugbreak, cb+0x10)
-//   ecb 0x6D8  - luau_execute's native entry calls `[g+6F0h]` (ecb.enter, +0x18)
-//   interrupt is cb+0x48: 8 sites in luau_execute load `[g+688h]`, null-check it,
-//   store savedpc and call it with rdx = -1.
-// 02c37bc moved everything before 0x4B0. Verified in IDA against luaC_step
-// (0x26670B0) and the gcstep worker (0x2666E90), both reached through
-// g = *(L + 0x68):
-//   *(g+0x10) / *(g+0x18)   GCthreshold / totalbytes  (were 0x50 / 0x58)
-//   *(g+0x20) / *(g+0x21)   currentwhite / gcstate    (were 0x00 / 0x01)
-//   *(g+0x40)               grayagain, relinked by the thread barrier (was 0x38)
-//   *(g+0x48)               gray                      (was 0x28)
-//   *(g+0x54) / *(g+0x58)   gcstepsize / gcstepmul    (were 0x40 / 0x44)
-//   *(g+0x2E0) / *(g+0x2E8) sweepgcopage / mainthread (were 0x98 / 0x60)
-//   *(g+0x5F8)              sweepgcopage_cage
-//   *(g + 8*tt + 808)       mt[]  -> 0x328            (was 0x440)
-//   *(g+0x08) / *(g+0x0C)   strt.nuse / strt.size, so strt leads at 0x00
-//                           (was 0x18 - this is what made luaS_newlstr read a
-//                            garbage hash table and fault on a valid state)
-struct global_State
-{
-    // 742 (cec3ad5889b447cf): everything before 0x6D8 moved again; matches the
-    // Achilles 742 dump. Verified in IDA for this build (g = *(L+0x18)):
-    //   *(g+0x00) currentwhite  - copied into every new object's `marked`
-    //   *(g+0x08) / *(g+0x10)   GCthreshold / totalbytes - luaC_step guard in
-    //                           printidentity (0x4243AB0) and luaB_*
-    //   *(g+0x18) / *(g+0x20)   strt.size / strt.hash - string bucket lookups
-    //   *(g+0x28) / *(g+0x30)   frealloc(ud, ...) - luau_execute free paths
-    //   *(g+0x58)               grayagain - inlined thread barrier relink
-    //   *(g + 8*tt + 0x328)     mt[]      - luaB_getmetatable default case
-    //   *(g+0x398)              tmname[]  - __index dispatch in luau_execute
-    //   *(g+0x630)              registryfree
-    //   *(g+0x638)              cb  - cb.debugbreak at g+0x688, cb.interrupt at g+0x690
-    //   *(g+0x6F0)              ecb.enter (ecb at 0x6D8)
-    // 743 (7a0c6d10fcb34a2c): everything before 0x6D8 moved again, mostly back
-    // to upstream order; from the Achilles 743 dump. cb stayed at 0x638 and ecb
-    // at 0x6D8. Checked in IDA for 7431134: the dump had cageud and errorjmp
-    // swapped. The caged page allocator (0x265DD90) calls [g+4B0h] with
-    // rcx = [g+608h], and lua_newstate (0x26210C0) zeroes 0x608 with the other
-    // cage fields. With cageud at 0x6D0 every lua_newbuffer passed ud = null
-    // into Roblox's cage allocator (0x43252D0) and crashed.
-    // 744 (0.744.0.7441077): upstream-like order again. All three 744 dumps
-    // agree except where noted; verified in IDA for this build:
-    //   lua_newstate (0x2698850): sizeof(LG) 0x4D60 (global at LG+0x90, so
-    //     sizeof(global_State) 0x4CD0); frealloc 0x20 / ud 0x28; gcgoal/
-    //     stepmul/stepsize 0x14/0x18/0x1C = 200/200/1024; totalbytes 0x50;
-    //     mainthread 0x1A0; uvhead.u.open 0x1B8/0x1C0; ptrenckey[0] = 1 at
-    //     0x638; registryfree 0x628 tagged 0x7 in the top nibble; memcatbytes
-    //     0x2DB0; gcstats 0x4A38; lastprotoid/lastclassid 0x4AF0/0x4AF4 = 1;
-    //     gcmetrics 0x4AF8 (0x1D8 bytes, always present now).
-    //   luaC_step (0x26B0B80): cb.interrupt at [g+6B8h] (cb 0x660).
-    //   caged allocator (0x26E02E4): calls [g+4A8h] with rcx = [g+600h];
-    //     luaM_freegco_ caged path uses freegcopages_cage 0x4C0 and
-    //     allgcopages_cage 0x4B0.
-    //   mt[] `[g + 8*tt + 320h]` everywhere in luau_execute / luaB_*.
-    //   lua_unref (0x2690E60): registry [g+618h], registryfree [g+628h]
-    //     masked 0x0FFFFFFF with the top nibble preserved.
-    //   luaF_feedback reads ecb.inlinefunction at [g+710h] (ecb 0x6D0).
-    // errorjmp at 0x630 is unverified (nothing in the VM touches 0x62C-0x637);
-    // ldo.cpp keeps its own thread_local errorjmp, so nothing reads it.
-    stringtable strt;                                       /* 0x0000 */
-    unsigned char currentwhite;                             /* 0x0010 */
-    unsigned char gcstate;                                  /* 0x0011 */
-    unsigned char gap_12[0x2];                              /* 0x0012 */
-    int gcgoal;                                             /* 0x0014 */
-    int gcstepmul;                                          /* 0x0018 */
-    int gcstepsize;                                         /* 0x001C */
-    lua_Alloc frealloc;                                     /* 0x0020 */
-    void* ud;                                               /* 0x0028 */
-    GCObject* gray;                                         /* 0x0030 */
-    GCObject* grayagain;                                    /* 0x0038 */
-    GCObject* weak;                                         /* 0x0040 */
-    size_t GCthreshold;                                     /* 0x0048 */
-    size_t totalbytes;                                      /* 0x0050 */
-    lua_Page* freepages[LUA_SIZECLASSES];                   /* 0x0058 */
-    lua_Page* allpages;                                     /* 0x0198 */
-    lua_State* mainthread;                                  /* 0x01A0 */
-    UpVal uvhead;                                           /* 0x01A8 */
-    lua_Page* freegcopages[LUA_SIZECLASSES];                /* 0x01D0 */
-    lua_Page* sweepgcopage;                                 /* 0x0310 */
-    lua_Page* allgcopages;                                  /* 0x0318 */
-    LuaTable* mt[LUA_T_COUNT];                              /* 0x0320 */
-    TString* tmname[TM_N];                                  /* 0x0390 */
-    TString* ttname[LUA_T_COUNT];                           /* 0x0438 */
-    lua_CageAlloc cagealloc;                                /* 0x04A8 - lua_CageAlloc */
-    lua_Page* allgcopages_cage;                             /* 0x04B0 */
-    lua_Page* sweepgcopage_cage;                            /* 0x04B8 */
-    lua_Page* freegcopages_cage[LUA_SIZECLASSES];           /* 0x04C0 */
-    void* cageud;                                           /* 0x0600 */
-    TValue pseudotemp;                                      /* 0x0608 */
-    TValue registry;                                        /* 0x0618 */
-    registryfree_t registryfree;                            /* 0x0628 */
-    unsigned char gap_62C[0x4];                             /* 0x062C */
-    struct lua_jmpbuf* errorjmp;                            /* 0x0630 - unverified */
-    unsigned long long ptrenckey[4];                        /* 0x0638 */
-    unsigned long long rngstate;                            /* 0x0658 */
-    lua_Callbacks cb;                                       /* 0x0660 */
-    lua_ExecutionCallbacks ecb;                             /* 0x06D0 */
-    unsigned char gap_718[0x8];                             /* 0x0718 */
-    alignas(16) unsigned char ecbdata[LUA_EXECUTION_CALLBACK_STORAGE]; /* 0x0720 */
-    lua_UdataDirectAccessData udatadirect[UTAG_INTERNAL_LIMIT];        /* 0x0920, stride 0x48 */
-    size_t memcatbytes[LUA_MEMORY_CATEGORIES];              /* 0x2DB0 */
-    void (*udatagc[LUA_UTAG_LIMIT])(struct lua_State*, void*); /* 0x35B0 */
-    lua_UserdataMark udatamark[LUA_UTAG_LIMIT];             /* 0x39B0 */
-    LuaTable* udatamt[LUA_UTAG_LIMIT];                      /* 0x3DB0 */
-    TValue weakregistry;                                    /* 0x41B0 */
-    int weakregistryfree;                                   /* 0x41C0 */
-    int weakregistrytop;                                    /* 0x41C4 */
-    lua_EmbedderGc embeddergc;                              /* 0x41C8 */
-    TString* lightuserdataname[LUA_LUTAG_LIMIT];            /* 0x41D0, 128 entries */
-    struct LuaTable* udatadirectfields[UTAG_INTERNAL_LIMIT]; /* 0x45D0 */
-    Closure* builtinPcall;                                  /* 0x49E0 */
-    Closure* builtinXpcall;                                 /* 0x49E8 */
-    unsigned long long ptrenckeynew[8];                     /* 0x49F0 */
-    bool ptrencactive;                                      /* 0x4A30 */
-    unsigned char gap_4A31[0x7];                            /* 0x4A31 */
-    struct GCStats gcstats;                                 /* 0x4A38 */
-    unsigned int lastprotoid;                               /* 0x4AF0 */
-    unsigned int lastclassid;                               /* 0x4AF4 */
+struct global_State {
+    unsigned char currentwhite; /* (0) (0x0) */
+    char gap_0[0x1]; //new member?
+    unsigned char gcstate; /* (2) (0x2) */
+    char gap_1[0x5];
+    lua_Alloc frealloc; /* (8) (0x8) */
+    void* ud; /* (16) (0x10) */
+    int gcstepsize; /* (24) (0x18) */
+    int gcstepmul; /* (28) (0x1C) */
+    int gcgoal; /* (32) (0x20) */
+    char gap_2[0x4];
+    GCObject* gray; /* (40) (0x28) */
+    GCObject* grayagain; /* (48) (0x30) */
+    GCObject* weak; /* (56) (0x38) */
+    char gap_3[0x8]; //new member?
+    stringtable strt; /* (72) (0x48) */
+    char gap_4[0x8]; //new member?
+    size_t GCthreshold; /* (96) (0x60) */
+    size_t totalbytes; /* (104) (0x68) */
+    lua_Page* sweepgcopage; /* (112) (0x70) */
+    lua_State* mainthread; /* (120) (0x78) */
+    UpVal uvhead; /* (128) (0x80) */
+    lua_Page* allgcopages; /* (168) (0xA8) */
+    lua_Page* freepages[40]; /* (176) (0xB0) */
+    lua_Page* freegcopages[40]; /* (496) (0x1F0) */
+    lua_Page* allpages; /* (818) (0x330) */
+    LuaTable* mt[LUA_T_COUNT]; /* (824) (0x338) */
+    TString* ttname[LUA_T_COUNT]; /* (936) (0x3A8) */
+    TString* tmname[TM_N]; /* (1048) (0x418) */
+    lua_Page* freegcopages_cage[40]; /* (1216) (0x4C0) */
+    void* cageud; /* (1536) (0x600) */
+    lua_Page* allgcopages_cage; /* (1544) (0x608) */
+    lua_CageAlloc cagealloc; /* (1552) (0x610) */
+    lua_Page* sweepgcopage_cage; /* (1560) (0x618) */
+    TValue pseudotemp; /* (1568) (0x620) */
+    TValue registry; /* (1584) (0x630) */
+    registryfree_value registryfree; /* (1600) (0x640) */
+    char gap_8[0x4];
+    struct lua_jmpbuf* errorjmp; /* (1608) (0x648) */
+    uint64_t ptrenckey[4]; /* (1616) (0x650) */
+    lua_Callbacks cb; /* (1648) (0x670) */
+    uint64_t rngstate; /* (1760) (0x6E0) */
+    lua_ExecutionCallbacks ecb; /* (1768) (0x6E8) */
+    alignas(16) uint8_t ecbdata[LUA_EXECUTION_CALLBACK_STORAGE]; /* (1856) (0x740) */
+    lua_UdataDirectAccessData udatadirect[UTAG_INTERNAL_LIMIT]; /* (2368) (0x940) */
+    LuauPageset taggedpageset[TAGGED_PAGESET_SIZE];
+    int sweeppageset; /* (14416) (0x3850) */
+    char gap_22[0x4];
+    size_t memcatbytes[LUA_MEMORY_CATEGORIES]; /* (14424) (0x3858) */
+    void (*udatagc[LUA_UTAG_LIMIT])(struct lua_State*, void*); /* (16472) (0x4058) */
+    lua_UserdataMark udatamark[LUA_UTAG_LIMIT];
+    LuaTable* udatamt[LUA_UTAG_LIMIT]; /* (18520) (0x4858) */
+    TValue weakregistry;
+    int weakregistryfree;
+    int weakregistrytop;
+    lua_EmbedderGc embeddergc;
+    TString* lightuserdataname[LUA_LUTAG_LIMIT]; /* (19560) (0x4C68) */
+    LuaTable* udatadirectfields[UTAG_INTERNAL_LIMIT]; /* (20600) (0x5078) */
+    Closure* builtinPcall; /* (21640) (0x5488) */
+    Closure* builtinXpcall; /* (21648) (0x5490) */
+    uint64_t ptrenckeynew[8]; /* (21656) (0x5498) */
+    bool ptrencactive; /* (21720) (0x54D8) */
+    char gap_13[0x7];
+    GCStats gcstats; /* (21728) (0x54E0) */
+    unsigned int lastprotoid; /* (21912) (0x5598) */
+    unsigned int lastclassid; /* (21916) (0x559C) */
 #ifdef LUAI_GCMETRICS
-    GCMetrics gcmetrics;                                    /* 0x4AF8 */
+    GCMetrics gcmetrics; /* (21920) (0x55A0) */
 #endif
 };
-
-// ---------------------------------------------------------------------------
-// Layout guards for Roblox 743 (7a0c6d10fcb34a2c).
-//
-// Every field below is read or written against memory Roblox allocated, so a
-// size drift in ANY member type silently shifts everything after it and turns
-// into a heap corruption at runtime. These asserts turn that into a build
-// error instead. They are how the lua_Callbacks 104-vs-112 byte bug was found.
-//
-// If one of these fires, do NOT adjust the number - find the member type whose
-// size changed and fix that.
-// ---------------------------------------------------------------------------
-static_assert(sizeof(lua_UdataDirectAccessData) == 0x48, "udatadirect stride must be 0x48");
-static_assert(sizeof(lua_ExecutionCallbacks) == 0x48, "lua_ExecutionCallbacks must be 72 bytes");
-
-static_assert(offsetof(global_State, strt) == 0x0000, "global_State::strt");
-static_assert(offsetof(global_State, currentwhite) == 0x0010, "global_State::currentwhite");
-static_assert(offsetof(global_State, gcgoal) == 0x0014, "global_State::gcgoal");
-static_assert(offsetof(global_State, frealloc) == 0x0020, "global_State::frealloc");
-static_assert(offsetof(global_State, ud) == 0x0028, "global_State::ud");
-static_assert(offsetof(global_State, gray) == 0x0030, "global_State::gray");
-static_assert(offsetof(global_State, grayagain) == 0x0038, "global_State::grayagain");
-static_assert(offsetof(global_State, weak) == 0x0040, "global_State::weak");
-static_assert(offsetof(global_State, GCthreshold) == 0x0048, "global_State::GCthreshold");
-static_assert(offsetof(global_State, totalbytes) == 0x0050, "global_State::totalbytes");
-static_assert(offsetof(global_State, freepages) == 0x0058, "global_State::freepages");
-static_assert(offsetof(global_State, allpages) == 0x0198, "global_State::allpages");
-static_assert(offsetof(global_State, mainthread) == 0x01A0, "global_State::mainthread");
-static_assert(offsetof(global_State, uvhead) == 0x01A8, "global_State::uvhead");
-static_assert(offsetof(global_State, freegcopages) == 0x01D0, "global_State::freegcopages");
-static_assert(offsetof(global_State, sweepgcopage) == 0x0310, "global_State::sweepgcopage");
-static_assert(offsetof(global_State, allgcopages) == 0x0318, "global_State::allgcopages");
-static_assert(offsetof(global_State, mt) == 0x0320, "global_State::mt");
-static_assert(offsetof(global_State, tmname) == 0x0390, "global_State::tmname");
-static_assert(offsetof(global_State, ttname) == 0x0438, "global_State::ttname");
-static_assert(offsetof(global_State, cagealloc) == 0x04A8, "global_State::cagealloc");
-static_assert(offsetof(global_State, allgcopages_cage) == 0x04B0, "global_State::allgcopages_cage");
-static_assert(offsetof(global_State, sweepgcopage_cage) == 0x04B8, "global_State::sweepgcopage_cage");
-static_assert(offsetof(global_State, freegcopages_cage) == 0x04C0, "global_State::freegcopages_cage");
-static_assert(offsetof(global_State, cageud) == 0x0600, "global_State::cageud");
-static_assert(offsetof(global_State, pseudotemp) == 0x0608, "global_State::pseudotemp");
-static_assert(offsetof(global_State, registry) == 0x0618, "global_State::registry");
-static_assert(offsetof(global_State, registryfree) == 0x0628, "global_State::registryfree");
-static_assert(offsetof(global_State, errorjmp) == 0x0630, "global_State::errorjmp");
-static_assert(offsetof(global_State, ptrenckey) == 0x0638, "global_State::ptrenckey");
-static_assert(offsetof(global_State, rngstate) == 0x0658, "global_State::rngstate");
-static_assert(offsetof(global_State, cb) == 0x0660, "global_State::cb");
-static_assert(offsetof(global_State, ecb) == 0x06D0, "global_State::ecb");
-static_assert(offsetof(global_State, ecbdata) == 0x0720, "global_State::ecbdata");
-static_assert(offsetof(global_State, udatadirect) == 0x0920, "global_State::udatadirect");
-static_assert(offsetof(global_State, memcatbytes) == 0x2DB0, "global_State::memcatbytes");
-static_assert(offsetof(global_State, udatagc) == 0x35B0, "global_State::udatagc");
-static_assert(offsetof(global_State, udatamark) == 0x39B0, "global_State::udatamark");
-static_assert(offsetof(global_State, udatamt) == 0x3DB0, "global_State::udatamt");
-static_assert(offsetof(global_State, weakregistry) == 0x41B0, "global_State::weakregistry");
-static_assert(offsetof(global_State, embeddergc) == 0x41C8, "global_State::embeddergc");
-static_assert(offsetof(global_State, lightuserdataname) == 0x41D0, "global_State::lightuserdataname");
-static_assert(offsetof(global_State, udatadirectfields) == 0x45D0, "global_State::udatadirectfields - check LUA_LUTAG_LIMIT is 128");
-static_assert(offsetof(global_State, builtinPcall) == 0x49E0, "global_State::builtinPcall - check LUA_LUTAG_LIMIT is 128");
-static_assert(offsetof(global_State, ptrenckeynew) == 0x49F0, "global_State::ptrenckeynew");
-static_assert(offsetof(global_State, gcstats) == 0x4A38, "global_State::gcstats");
-static_assert(offsetof(global_State, lastprotoid) == 0x4AF0, "global_State::lastprotoid");
-static_assert(offsetof(global_State, lastclassid) == 0x4AF4, "global_State::lastclassid");
-#ifndef LUAI_GCMETRICS
-static_assert(sizeof(global_State) == 0x4B00, "global_State must be 19200 bytes");
+#ifdef LUAI_GCMETRICS
+static_assert(sizeof(global_State) == 22400, "sizeof(global_State) == 22400");
+#else
+static_assert(sizeof(global_State) == 21920, "sizeof(global_State) == 21920");
 #endif
+
 // clang-format on
 
 /*
@@ -468,97 +421,36 @@ static_assert(sizeof(global_State) == 0x4B00, "global_State must be 19200 bytes"
 */
 // clang-format off
 
-// 02c37bc layout. Still 136 bytes, but the whole tail was reordered against 740 -
-// the pointer block that used to lead (ci/base/global/stack/top) now trails, and
-// the bookkeeping fields moved to the front. Deltas from 740:
-//   singlestep / isactive   swapped (singlestep 0x05, isactive 0x06)
-//   namecall   0x58 -> 0x08      gclist     0x50 -> 0x10
-//   stacksize  0x38 -> 0x18      openupval  0x40 -> 0x20
-//   userdata   0x78 -> 0x28      finalizers 0x48 -> 0x30
-//   nCcalls    0x80 -> 0x38      cachedslot 0x84 -> 0x3C
-//   gt         0x60 -> 0x40      end_ci     0x68 -> 0x48
-//   base_ci    0x70 -> 0x50      ci         0x08 -> 0x58
-//   base       0x10 -> 0x60      global     0x18 -> 0x68
-//   top        0x28 -> 0x70      stack      0x20 -> 0x78
-//   stack_last 0x30 -> 0x80
-// 742 (cec3ad5889b447cf). Reordered again; matches the Achilles 742 dump.
-// Verified in IDA for this build:
-//   luau_execute entry `cmp byte [L+6], 0`          -> singlestep 0x06
-//   every luaB_*: top `[L+20h]`, base `[L+28h]`,
-//     ci `[L+8]` (ci->top at +8), g `[L+18h]`       -> top/base/ci/global
-//   thread barrier `mov [L+50h], [g+58h]`          -> gclist 0x50
-//   __index TM path writes `[L+5Ch]`               -> cachedslot 0x5C
-//   LOP_BREAK `cmp byte [L+3], 0`                  -> status 0x03
-//   userthread cb (0x4210720) reads/writes `[L+80h]` -> userdata 0x80
-//   capability walk (0x4185DD0) `a1[15]`, `a1[1]`  -> base_ci 0x78, ci 0x08
-//   upvalue close loop `[L+48h]`                   -> openupval 0x48
-// 743 (7a0c6d10fcb34a2c): reordered again (userdata 0x80 -> 0x08, global
-// 0x18 -> 0x50); from the Achilles 743 dump, not yet checked in IDA.
-struct lua_State
-{
-    // 744 (0.744.0.7441077): upstream-like order; all three 744 dumps agree.
-    // Verified in IDA: the API index2addr in 0x268D990 uses base `[L+58h]` and
-    // top `[L+70h]`; every frame reads g `[L+78h]`; lua_newstate stores
-    // L->global at L+0x78; luaC_traversestack relinks gclist at `[L+40h]`;
-    // the thread barrier tests `byte [L], 4` (marked) and writes `[L+40h]`.
-    CommonHeader;                               /* 0x00 */
-    unsigned char status;                       /* 0x03 */
-    unsigned char activememcat;                 /* 0x04 */
-    bool singlestep;                            /* 0x05 */
-    bool isactive;                              /* 0x06 */
-    unsigned char gap_07[0x1];                  /* 0x07 */
-    LuaTable* gt;                               /* 0x08 */
-    CallInfo* end_ci;                           /* 0x10 */
-    CallInfo* base_ci;                          /* 0x18 */
-    unsigned short nCcalls;                     /* 0x20 */
-    unsigned short baseCcalls;                  /* 0x22 */
-    unsigned int cachedslot;                    /* 0x24 */
-    struct RobloxExtraSpace* userdata;          /* 0x28 */
-    LuaTable* finalizers;                       /* 0x30 */
-    TString* namecall;                          /* 0x38 */
-    GCObject* gclist;                           /* 0x40 */
-    UpVal* openupval;                           /* 0x48 */
-    CallInfo* ci;                               /* 0x50 */
-    TValue* base;                               /* 0x58 */
-    TValue* stack;                              /* 0x60 */
-    TValue* stack_last;                         /* 0x68 */
-    TValue* top;                                /* 0x70 */
-    global_State* global;                       /* 0x78 */
-    LSTATE_STACKSIZE_ENC<int> stacksize;        /* 0x80 */
-    int size_ci;                                /* 0x84 */
+// Structure For Hash(f0ea5da9412f4e35)
+
+struct lua_State {
+    CommonHeader; /* (0) (0x0) */
+    uint8_t status; /* (3) (0x3) */
+    bool singlestep; /* (4) (0x4) */
+    bool isactive; /* (5) (0x5) */
+    uint8_t activememcat; /* (6) (0x6) */
+    char gap_0[0x1];
+    struct RobloxExtraSpace* userdata; /* (8) (0x8) */
+    LuaTable* gt; /* (16) (0x10) */
+    TString* namecall; /* (24) (0x18) */
+    CallInfo* end_ci; /* (32) (0x20) */
+    CallInfo* base_ci; /* (40) (0x28) */
+    UpVal* openupval; /* (48) (0x30) */
+    unsigned short nCcalls; /* (56) (0x38) */
+    unsigned short baseCcalls; /* (58) (0x3A) */
+    unsigned int cachedslot; /* (60) (0x3C) */
+    GCObject* gclist; /* (64) (0x40) */
+    TValue* stack; /* (72) (0x48) */
+    global_State* global; /* (80) (0x50) */
+    TValue* base; /* (88) (0x58) */
+    TValue* top; /* (96) (0x60) */
+    TValue* stack_last; /* (104) (0x68) */
+    CallInfo* ci; /* (112) (0x70) */
+    LSTATE_STACKSIZE_ENC<int> stacksize; /* (120) (0x78) */
+    int size_ci; /* (124) (0x7C) */
+    LuaTable* finalizers; /* (128) (0x80) */
 };
-
-static_assert(offsetof(lua_State, status) == 0x03, "lua_State::status");
-static_assert(offsetof(lua_State, activememcat) == 0x04, "lua_State::activememcat");
-static_assert(offsetof(lua_State, singlestep) == 0x05, "lua_State::singlestep");
-static_assert(offsetof(lua_State, isactive) == 0x06, "lua_State::isactive");
-static_assert(offsetof(lua_State, gt) == 0x08, "lua_State::gt");
-static_assert(offsetof(lua_State, end_ci) == 0x10, "lua_State::end_ci");
-static_assert(offsetof(lua_State, base_ci) == 0x18, "lua_State::base_ci");
-static_assert(offsetof(lua_State, nCcalls) == 0x20, "lua_State::nCcalls");
-static_assert(offsetof(lua_State, cachedslot) == 0x24, "lua_State::cachedslot");
-static_assert(offsetof(lua_State, userdata) == 0x28, "lua_State::userdata");
-static_assert(offsetof(lua_State, finalizers) == 0x30, "lua_State::finalizers");
-static_assert(offsetof(lua_State, namecall) == 0x38, "lua_State::namecall");
-static_assert(offsetof(lua_State, gclist) == 0x40, "lua_State::gclist");
-static_assert(offsetof(lua_State, openupval) == 0x48, "lua_State::openupval");
-static_assert(offsetof(lua_State, ci) == 0x50, "lua_State::ci");
-static_assert(offsetof(lua_State, base) == 0x58, "lua_State::base");
-static_assert(offsetof(lua_State, stack) == 0x60, "lua_State::stack");
-static_assert(offsetof(lua_State, stack_last) == 0x68, "lua_State::stack_last");
-static_assert(offsetof(lua_State, top) == 0x70, "lua_State::top");
-static_assert(offsetof(lua_State, global) == 0x78, "lua_State::global");
-static_assert(offsetof(lua_State, stacksize) == 0x80, "lua_State::stacksize");
-static_assert(sizeof(lua_State) == 0x88, "lua_State must be 136 bytes");
-
-static_assert(offsetof(CallInfo, base) == 0x00, "CallInfo::base");
-static_assert(offsetof(CallInfo, func) == 0x08, "CallInfo::func");
-static_assert(offsetof(CallInfo, p) == 0x10, "CallInfo::p");
-static_assert(offsetof(CallInfo, top) == 0x18, "CallInfo::top");
-static_assert(offsetof(CallInfo, savedpc) == 0x20, "CallInfo::savedpc");
-static_assert(offsetof(CallInfo, flags) == 0x2C, "CallInfo::flags");
-static_assert(sizeof(CallInfo) == 0x30, "CallInfo must be 48 bytes");
-
+static_assert(sizeof(lua_State) == 136, "sizeof(lua_State) == 136");
 
 // clang-format on
 

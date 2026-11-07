@@ -7,12 +7,6 @@
 
 #include <string.h>
 
-// ATOMFLAG_UNDEF is an offset-dependent constant: the pair has to land as
-// 0x8000FFFF across TString+0x04, so a struct edit that moves either half must
-// fail here rather than silently start producing strings the client flags.
-static_assert(offsetof(TString, atomflag) == 0x04, "TString::atomflag moved");
-static_assert(offsetof(TString, atom) == 0x06, "TString::atom moved");
-
 unsigned int luaS_hash(const char* str, size_t len)
 {
     // Note that this hashing algorithm is replicated in BytecodeBuilder.cpp, BytecodeBuilder::getStringHash
@@ -81,7 +75,6 @@ static TString* newlstr(lua_State* L, const char* str, size_t l, unsigned int h)
 
     TString* ts = luaM_newgco(L, TString, sizestring(l), L->activememcat, LUA_TSTRING);
     luaC_init(L, ts, LUA_TSTRING);
-    ts->atomflag = 0xFFFF;
     ts->atom = ATOM_UNDEF;
     ts->hash = h;
     ts->len = unsigned(l);
@@ -108,7 +101,6 @@ TString* luaS_bufstart(lua_State* L, size_t size)
 
     TString* ts = luaM_newgco(L, TString, sizestring(size), L->activememcat, LUA_TSTRING);
     luaC_init(L, ts, LUA_TSTRING);
-    ts->atomflag = 0xFFFF;
     ts->atom = ATOM_UNDEF;
     ts->hash = 0; // computed in luaS_buffinish
     ts->len = unsigned(size);
@@ -141,7 +133,6 @@ TString* luaS_buffinish(lua_State* L, TString* ts)
 
     ts->hash = h;
     ts->data[ts->len] = '\0'; // ending 0
-    ts->atomflag = 0xFFFF;
     ts->atom = ATOM_UNDEF;
     ts->next = tb->hash[bucket]; // chain new entry
     tb->hash[bucket] = ts;

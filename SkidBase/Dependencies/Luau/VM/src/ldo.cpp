@@ -20,6 +20,7 @@
 
 LUAU_FASTFLAG(LuauFastpcall)
 LUAU_FASTFLAGVARIABLE(LuauPcallErrorContinuationReentry)
+LUAU_FASTFLAGVARIABLE(LuauIsYieldableSimplify)
 
 // keep max stack allocation request under 1GB
 #define MAX_STACK_SIZE (int(1024 / sizeof(TValue)) * 1024 * 1024)
@@ -47,33 +48,23 @@ struct lua_jmpbuf
 #define LUAU_LONGJMP(buf, code) longjmp(buf, code)
 #endif
 
-// Roblox 0.738's global_State has no errorjmp field - it only survives in
-// lstate.h as a compile shim appended past the end of the struct. Reading or
-// writing g->errorjmp against a live Roblox state is an out-of-bounds access.
-//
-// The chain is per-thread by nature (it is a setjmp stack for the calling OS
-// thread), so a thread_local head is a faithful replacement and keeps the
-// executor's own protected calls entirely out of Roblox's memory. Roblox's
-// engine-side throws are unaffected: those go through Offsets::luaD_throw.
-static thread_local lua_jmpbuf* g_executorErrorJmp = nullptr;
-
 int luaD_rawrunprotected(lua_State* L, Pfunc f, void* ud)
 {
     lua_jmpbuf jb;
-    jb.prev = g_executorErrorJmp;
+    jb.prev = L->global->errorjmp;
     jb.status = 0;
-    g_executorErrorJmp = &jb;
+    L->global->errorjmp = &jb;
 
     if (LUAU_SETJMP(jb.buf) == 0)
         f(L, ud);
 
-    g_executorErrorJmp = jb.prev;
+    L->global->errorjmp = jb.prev;
     return jb.status;
 }
 
 l_noret luaD_throw(lua_State* L, int errcode)
 {
-    if (lua_jmpbuf* jb = g_executorErrorJmp)
+    if (lua_jmpbuf* jb = L->global->errorjmp)
     {
         jb->status = errcode;
         LUAU_LONGJMP(jb->buf, 1);
@@ -169,9 +160,16 @@ int luaD_rawrunprotected(lua_State* L, Pfunc f, void* ud)
     return status;
 }
 
+//l_noret luaD_throw(lua_State* L, int errcode)
+//{
+//    throw lua_exception(L, errcode);
+//}
+
 l_noret luaD_throw(lua_State* L, int errcode)
 {
-    Hyperion::LuaD_Throw(L, errcode);
+    using ThrowException = void(__fastcall*)(lua_State*, int);
+    ThrowException Throw = reinterpret_cast<ThrowException>(Offsets::Luau::LuaD_Throw);
+    Throw(L, errcode);
 }
 #endif
 
@@ -888,7 +886,11 @@ int lua_break(lua_State* L)
 
 int lua_isyieldable(lua_State* L)
 {
-    return (L->nCcalls <= L->baseCcalls);
+    if (!FFlag::LuauIsYieldableSimplify)
+        return L->nCcalls <= L->baseCcalls;
+
+    LUAU_ASSERT(L->nCcalls >= L->baseCcalls);
+    return L->nCcalls == L->baseCcalls;
 }
 
 int luaD_pcall(lua_State* L, Pfunc func, void* u, ptrdiff_t old_top, ptrdiff_t ef)
@@ -926,7 +928,7 @@ int luaD_pcall(lua_State* L, Pfunc func, void* u, ptrdiff_t old_top, ptrdiff_t e
         if (!oldactive)
             L->isactive = false;
 
-        bool yieldable = L->nCcalls <= L->baseCcalls; // Inlined logic from 'lua_isyieldable' to avoid potential for an out of line call.
+        bool yieldable = FFlag::LuauIsYieldableSimplify ? lua_isyieldable(L) : (L->nCcalls <= L->baseCcalls);
 
         // restore nCcalls and baseCcalls before calling the debugprotectederror callback which may rely on the proper value to have been restored.
         L->nCcalls = oldnCcalls;

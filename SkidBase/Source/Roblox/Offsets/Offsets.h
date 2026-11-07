@@ -14,21 +14,21 @@ namespace Main {
     namespace Functions {
         inline const uintptr_t Print = Rebase(0x1ca9a30);
         inline const uintptr_t GetGlobalState = Rebase(0x4274c30);
-        inline const uintptr_t LuauExecute = Rebase(0x26789e0);
-        inline const uintptr_t LuaDThrow = Rebase(0x26360e0);
+        inline const uintptr_t LuauExecute = Rebase(0x277a970);
+        inline const uintptr_t LuaDThrow = Rebase(0x2750300);
         inline const uintptr_t OpcodeLookupTable = Rebase(0x735b280);
         inline const uintptr_t PushInstance = Rebase(0x42594c0);
     }
 
     namespace Miscellaneous {
-        inline const uintptr_t FakeDatamodelPOINTER = Rebase(0x8e4d7b8);
-        inline const uintptr_t LuaNil = Rebase(0x68ba8e8);
-        inline const uintptr_t LuaDummy = Rebase(0x68b9f58);
+        inline const uintptr_t FakeDatamodelPOINTER = Rebase(0x8EB6960);
+        inline const uintptr_t LuaNil = Rebase(0x6437a18);
+        inline const uintptr_t LuaDummy = Rebase(0x6437098);
         inline const uintptr_t TargetFPS = Rebase(0x81715b0);
     }
 
     namespace Offsets {
-        inline const uintptr_t DataModel = 0x1F0;
+        inline const uintptr_t DataModel = 0x1F8;
         inline const uintptr_t ScriptContext = 0x440;
         inline const uintptr_t Children = 0x70;
         inline const uintptr_t GameLoaded = 0x588;

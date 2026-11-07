@@ -99,8 +99,8 @@ namespace laustate
 {
     lua_State* GetLuasState(uintptr_t scriptContext)
     {
-        uint64_t v1 = 8;
-        uint64_t v2 = 8;
+        uint64_t v1 = 2;
+        uint64_t v2 = 0;
 
         __try
         {

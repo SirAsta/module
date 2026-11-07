@@ -11,15 +11,6 @@
 // string atoms are not defined by default; the storage is 16-bit integer
 #define ATOM_UNDEF -32768
 
-// Roblox widened the atom word to 32 bits: a flag half at TString+0x04 and the
-// atom itself at TString+0x06. Every string this VM allocates lands in the
-// game's own string table, so both halves have to start out the way Roblox's
-// allocator leaves them - 0x8000FFFF across the word. Leaving the flag half as
-// whatever luaM_newgco handed back is what the client's Luau integrity scan
-// counts against you; initialising it holds the violation count at its clean
-// baseline of 0x7.
-#define ATOMFLAG_UNDEF 0xFFFF
-
 #define sizestring(len) (offsetof(TString, data) + len + 1)
 
 #define luaS_new(L, s) (luaS_newlstr(L, s, strlen(s)))

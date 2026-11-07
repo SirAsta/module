@@ -5,147 +5,18 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <cstdint>
 #include <memory>
+#include <vector>
+#include <atomic>
+#include <windows.h>
 
 #include "luaconf.h"
-
-#include <Roblox/Offsets/Offsets.hpp>
 #include <Roblox/Offsets/Encs.hpp>
+#include <Encryptions.hpp>
 
-#define lua_normalisestack(L, mxs) { if (lua_gettop(L) > mxs) lua_settop(L, mxs); }
 
-namespace Hyperion {
-    inline void LuaD_Throw(lua_State* L, int errcode) {
-        Roblox::LuaD_Throw(L, errcode);
-    }
-    inline void Luau_Execute(lua_State* L) {
-        Roblox::Luau_Execute(L);
-    }
-}
-
-// Roblox 0.740 layout (version-2366ba214ec740ca). Moved from 739:
-//   Shared::script_context  0x08 -> 0x28
-//   capabilities            0x90 -> 0x58
-//   actor                   0x98 -> 0x68
-//   source ("script")       0x50 -> 0x98
-//   flyweightPtr            0x88 -> 0x60
-// Verified in IDA: task.defer (0x435A060) reads L+0x78 (userdata) -> +0x18
-// (shared) -> +0x28 for the ScriptContext. The rest is the 740 struct dump.
-// Writing capabilities at the old 0x90 now lands inside the `script` weak_ptr,
-// and identity spoofing fails silently rather than loudly - if setidentity stops
-// working after a client update, re-check these five first.
-//
-// `identity` is a uint32 (it heads the 16-byte RBX::Identity sub-struct); it is
-// kept as a bare field so `L->userdata->identity = Level` call sites still compile.
-// 02c37bc moved almost every field again. Deltas from 740:
-//   flyweightPtr            0x60 -> 0x40
-//   identity                0x30 -> 0x48
-//   identity_script_context 0x40 -> 0x58   (still RBX::Identity + 0x10)
-//   source ("script")       0x98 -> 0x68
-//   capabilities            0x58 -> 0x80
-//   InstanceDefiningCaps    0x78 -> 0x88
-//   actor                   0x68 -> 0x98
-// Shared was reordered too: script_context 0x28 -> 0x10, so the task.defer path
-// is now L+0x28 (userdata) -> +0x18 (shared) -> +0x10 (ScriptContext), not +0x28.
-// 742 (cec3ad5889b447cf) moved almost every field again, and Shared grew a
-// leading engineContext pointer (now 0x38 bytes). Matches the Achilles 742 dump.
-// Verified in IDA against the ExtraSpace copy-ctor (0x4193360) called by the
-// userthread callback (0x4210720, which allocates 0xB8 and stores it at L+0x80):
-//   +0x18/+0x20 shared_ptr<Shared>; Shared+0x30 threadCount is incremented,
-//               Shared+0x18 is the allThreads set, Shared+0x28 the ScriptContext
-//   +0x40 capabilities - overwritten with the caller's proto capability mask
-//   +0x48 actor weak_ptr, +0x58/+0x68 the 32-byte RBX::Identity block (OWORD copies)
-//   +0x80 flyweight ("FlyweightCtor"), +0x88 script weak_ptr, +0x98 InstanceDefiningCaps
-// Deltas from 02c37bc:
-//   capabilities            0x80 -> 0x40
-//   actor                   0x98 -> 0x48
-//   identity                0x48 -> 0x58
-//   identity_script_context 0x58 -> 0x68   (still RBX::Identity + 0x10)
-//   flyweightPtr            0x40 -> 0x80
-//   source ("script")       0x68 -> 0x88
-//   InstanceDefiningCaps    0x88 -> 0x98
-//   Shared::script_context  0x10 -> 0x28, threadCount 0x28 -> 0x30
-// 743 (7a0c6d10fcb34a2c) moved most fields again and reordered Shared; from the
-// Achilles 743 dump, not yet checked in IDA. Size is still 0xB8 / Shared 0x38.
-// Deltas from 742:
-//   identity                0x58 -> 0x30
-//   identity_script_context 0x68 -> 0x40   (still RBX::Identity + 0x10)
-//   source ("script")       0x88 -> 0x50
-//   InstanceDefiningCaps    0x98 -> 0x60
-//   flyweightPtr            0x80 -> 0x70
-//   actor                   0x48 -> 0x90
-//   capabilities            0x40 -> 0xA0
-//   Shared: needToFree 0x00, allThreads 0x08, engineContext 0x18,
-//           threadCount 0x20, scriptVmState 0x28, script_context 0x30
-// 744 (0.744.0.7441077): moved again; all three 744 dumps agree and the copy
-// constructor (ExtraSpaceCopy, 0x4260920) confirms it: shared_ptr 0x18/0x20,
-// intrusive ref 0x28, weak_ptr 0x30 copied, weak_ptr 0x40 zeroed, capabilities
-// 0x50, flyweight 0x58 (copied through its own ctor), the identity block
-// 0x60-0x7F copied as two OWORDs, 0x80 zeroed, weak_ptrs 0x88 (script) and 0x98
-// (actor), flag bytes 0xA8-0xAB, 0xB0 copied. It bumps Shared+0x18
-// (threadCount), links into Shared+0x08 (allThreads {count, head}) and reads
-// Shared+0x30 (script_context).
-// Deltas from 743:
-//   identity                0x30 -> 0x60
-//   identity_script_context 0x40 -> 0x70   (still RBX::Identity + 0x10)
-//   source ("script")       0x50 -> 0x88
-//   InstanceDefiningCaps    0x60 -> 0x30
-//   flyweightPtr            0x70 -> 0x58
-//   actor                   0x90 -> 0x98
-//   capabilities            0xA0 -> 0x50
-//   Shared: threadCount 0x20 -> 0x18, engineContext 0x18 -> 0x20
-struct RobloxExtraSpace
-{
-    struct Shared
-    {
-        void* needToFree;                   /* 0x00 */
-        unsigned char gap_08[0x10];         /* 0x08 - RBX::Intrusive::Set allThreads {count, head} */
-        int threadCount;                    /* 0x18 */
-        unsigned char gap_1C[0x4];          /* 0x1C */
-        void* engineContext;                /* 0x20 */
-        void* scriptVmState;                /* 0x28 */
-        void* script_context;               /* 0x30 */
-    };
-
-    RobloxExtraSpace* next;                 /* 0x00 */
-    void* _container;                       /* 0x08 */
-    RobloxExtraSpace* prev;                 /* 0x10 */
-    std::shared_ptr<Shared> shared;         /* 0x18 */
-    unsigned char gap_28[0x8];              /* 0x28 - intrusive ref, copied with ++ */
-    std::weak_ptr<uintptr_t> InstanceDefiningCapabilities; /* 0x30 */
-    unsigned char gap_40[0x10];             /* 0x40 - weak_ptr, not copied */
-    uint64_t capabilities;                  /* 0x50 */
-    void* flyweightPtr;                     /* 0x58 */
-    uint32_t identity;                      /* 0x60 - heads RBX::Identity */
-    unsigned char gap_64[0xC];              /* 0x64 */
-    void* identity_script_context;          /* 0x70 - Identity::ScriptContext */
-    unsigned char gap_78[0x10];             /* 0x78 */
-    std::weak_ptr<uintptr_t> source;        /* 0x88 - dump calls it "script" */
-    std::weak_ptr<uintptr_t> actor;         /* 0x98 */
-    unsigned char gap_A8[0x10];             /* 0xA8 */
-};
-
-// These are the fields the executor writes into the engine's own extra space, so
-// a silent drift here does not fail loudly - it just quietly writes past the
-// field and leaves the thread at its original identity.
-static_assert(offsetof(RobloxExtraSpace, shared) == 0x18, "RobloxExtraSpace::shared moved");
-static_assert(offsetof(RobloxExtraSpace, capabilities) == 0x50, "RobloxExtraSpace::capabilities moved");
-static_assert(offsetof(RobloxExtraSpace, actor) == 0x98, "RobloxExtraSpace::actor moved");
-static_assert(offsetof(RobloxExtraSpace, identity) == 0x60, "RobloxExtraSpace::identity moved");
-static_assert(offsetof(RobloxExtraSpace, identity_script_context) == 0x70, "RobloxExtraSpace::identity_script_context moved");
-static_assert(offsetof(RobloxExtraSpace, flyweightPtr) == 0x58, "RobloxExtraSpace::flyweightPtr moved");
-static_assert(offsetof(RobloxExtraSpace, source) == 0x88, "RobloxExtraSpace::source moved");
-static_assert(offsetof(RobloxExtraSpace, InstanceDefiningCapabilities) == 0x30, "RobloxExtraSpace::InstanceDefiningCapabilities moved");
-static_assert(sizeof(RobloxExtraSpace) == 0xB8, "RobloxExtraSpace must be 184 bytes");
-static_assert(offsetof(RobloxExtraSpace::Shared, script_context) == 0x30, "Shared::script_context moved");
-static_assert(offsetof(RobloxExtraSpace::Shared, threadCount) == 0x18, "Shared::threadCount moved");
-static_assert(sizeof(RobloxExtraSpace::Shared) == 0x38, "Shared must be 56 bytes");
-
-// lstate.h declares lua_State::userdata as RobloxExtraSpace*, while lapi.cpp,
-// Actor.hpp and TaskScheduler.cpp still spell it rbxextraspace. Same type, so
-// alias rather than renaming across four files.
-using rbxextraspace = RobloxExtraSpace;
-
+// option for multiple returns in `lua_pcall' and `lua_call'
 #define LUA_MULTRET (-1)
 
 /*
@@ -156,9 +27,6 @@ using rbxextraspace = RobloxExtraSpace;
 #define LUA_GLOBALSINDEX (-LUAI_MAXCSTACK - 2002)
 #define lua_upvalueindex(i) (LUA_GLOBALSINDEX - (i))
 #define lua_ispseudo(i) ((i) <= LUA_REGISTRYINDEX)
-
-
-
 
 // thread status; 0 is OK
 enum lua_Status
@@ -181,6 +49,66 @@ enum lua_CoStatus
     LUA_COERR,     // finished with error
 };
 
+// Structure For Hash(f0ea5da9412f4e35)
+
+namespace RBX {
+
+    struct Identity {
+        uint32_t type;
+        uint64_t assetId;
+    };
+
+    struct Instance {
+        ULONGLONG filler;
+    };
+
+    struct Intrusive {
+        template <typename T, typename U>
+        struct Set {
+            ULONGLONG count;
+            T* head;
+        };
+    };
+    struct detail {
+        template <typename T, typename U, bool V>
+        struct FlyweightData {
+            uint32_t magic;
+            T value;
+            std::atomic<int> refs;
+            int freshrefs;
+        };
+    };
+}
+
+struct RobloxExtraSpace;
+struct Shared {
+    RBX::Intrusive::Set<RobloxExtraSpace, RobloxExtraSpace> allThreads; /* (0) (0x0) */
+    void* engineContext; /* (16) (0x10) */
+    void* scriptContext; /* (24) (0x18) */
+    int threadCount; /* (32) (0x20) */
+    char gap_0[0x4];
+    void* scriptVmState; /* (40) (0x28) */
+    std::vector<std::shared_ptr<void const>>* needToFree; /* (48) (0x30) */
+};
+static_assert(sizeof(Shared) == 56, "sizeof(Shared) == 56");
+
+struct RobloxExtraSpace {
+    RobloxExtraSpace* next; /* (0) (0x0) */
+    RBX::Intrusive::Set<RobloxExtraSpace, RobloxExtraSpace>* _container; /* (8) (0x8) */
+    RobloxExtraSpace* prev; /* (16) (0x10) */
+    std::shared_ptr<Shared> shared; /* (24) (0x18) */
+    char gap_0[0x18];
+    std::weak_ptr<uintptr_t> actor; /* (64) (0x40) */
+    std::weak_ptr<uintptr_t> source; /* (80) (0x50) */
+    std::weak_ptr<RBX::Instance const> InstanceDefiningCapabilities; /* (96) (0x60) */
+    RBX::Identity identity; /* (112) (0x70) */
+    void* scriptContext; /* (128) (0x80) */
+    char gap_1[0x18];
+    uint64_t capabilities; /* (160) (0xA0) */
+    char gap_2[0x18];
+};
+static_assert(sizeof(RobloxExtraSpace) == 192, "sizeof(RobloxExtraSpace) == 192");
+
 typedef struct lua_State lua_State;
 
 typedef int (*lua_CFunction)(lua_State* L);
@@ -192,8 +120,8 @@ typedef int (*lua_Continuation)(lua_State* L, int status);
 
 typedef void* (*lua_Alloc)(void* ud, void* ptr, size_t osize, size_t nsize);
 
-// 743: allocator for the caged heap (buffers), selected per allocation type.
-// global_State::cagealloc (0x04B0) holds one of these.
+// `type` is an opaque VM-defined value which identifies the caged heap allocation kind
+// separating allocations of different types is recommended
 typedef void* (*lua_CageAlloc)(void* ud, void* ptr, size_t osize, size_t nsize, int type);
 
 // non-return type
@@ -268,7 +196,7 @@ typedef unsigned lua_Unsigned;
 /*
 ** state manipulation
 */
-LUA_API lua_State* lua_newstate(lua_Alloc f, void* ud);
+LUA_API lua_State* lua_newstate(lua_Alloc allocator, void* ud);
 LUA_API void lua_close(lua_State* L);
 LUA_API lua_State* lua_newthread(lua_State* L);
 LUA_API lua_State* lua_mainthread(lua_State* L);
@@ -412,7 +340,7 @@ LUA_API int lua_resumeerror(lua_State* L, lua_State* from);
 LUA_API int lua_status(lua_State* L);
 LUA_API int lua_isyieldable(lua_State* L);
 LUA_API void* lua_getthreaddata(lua_State* L);
-LUA_API void lua_setthreaddata(lua_State* L, rbxextraspace* data);
+LUA_API void lua_setthreaddata(lua_State* L, RobloxExtraSpace* data);
 LUA_API int lua_costatus(lua_State* L, lua_State* co);
 LUA_API int lua_hasfinalizers(lua_State* L);
 LUA_API void lua_pushfinalizerfunction(lua_State* L, lua_State* co, int toclose);
@@ -510,7 +438,6 @@ LUA_API double lua_clock();
 
 LUA_API void lua_setuserdatatag(lua_State* L, int idx, int tag);
 
-
 LUA_API void lua_setuserdatadtor(lua_State* L, int tag, lua_Destructor dtor);
 LUA_API lua_Destructor lua_getuserdatadtor(lua_State* L, int tag);
 
@@ -525,7 +452,9 @@ LUA_API lua_Destructor lua_getuserdatadtor(lua_State* L, int tag);
 // 1. Cycle reset (markref == NULL): clear accumulated information about marked
 //      native objects.
 // 2. Mark phase (markref != NULL): embedder must call markref for each new ref
-//      that is reachable from a marked native object.
+//      that is reachable from a marked native object and return nonzero if it
+//      made any progress. The GC propagates marks and repeatedly calls again
+//      until the embedder returns zero.
 //
 // Together, these are used to implement a fixed-point reachability algorithm
 // across both heaps.
@@ -536,7 +465,7 @@ LUA_API lua_Destructor lua_getuserdatadtor(lua_State* L, int tag);
 typedef void (*lua_UserdataMark)(lua_State* L, void* ud);
 LUA_API void lua_setuserdatamark(lua_State* L, int tag, lua_UserdataMark markfn);
 typedef void (*lua_EmbedderMark)(lua_State* L, int ref);
-typedef void (*lua_EmbedderGc)(lua_State* L, lua_EmbedderMark markref);
+typedef int (*lua_EmbedderGc)(lua_State* L, lua_EmbedderMark markref);
 LUA_API void lua_setembeddergc(lua_State* L, lua_EmbedderGc fn);
 
 // APIs for interacting with embedder-managed weak references.
@@ -561,7 +490,7 @@ LUA_API int lua_weakref(lua_State* L, int idx);
 LUA_API int lua_weakunref(lua_State* L, int ref);
 LUA_API int lua_getweakref(lua_State* L, int ref); // returns the type of the value pushed onto the stack
 
-// alternative access for metatables already registered with luaL_newmetatable (remove this restriction with FFlagLuauUdataMetatablePinned)
+// alternative access for userdata metatables
 // used by lua_newuserdatataggedwithmetatable to create tagged userdata with the associated metatable assigned
 LUA_API void lua_setuserdatametatable(lua_State* L, int tag);
 LUA_API void lua_getuserdatametatable(lua_State* L, int tag);
@@ -618,9 +547,6 @@ LUA_API void lua_cleartable(lua_State* L, int idx);
 LUA_API void lua_clonetable(lua_State* L, int idx);
 
 LUA_API lua_Alloc lua_getallocf(lua_State* L, void** ud);
-
-// installs the caged allocator used for buffer storage; implemented in lstate.cpp
-LUA_API void lua_setmemorycage(lua_State* L, lua_CageAlloc alloc, void* ud);
 
 /*
 ** reference system, can be used to pin objects
@@ -715,21 +641,21 @@ LUA_API const char* lua_debugtrace(lua_State* L);
 
 struct lua_Debug
 {
-    const char* name; /* offset 0 */
-    const char* what; /* offset 8 */
-    const char* source; /* offset 16 */
-    const char* short_src; /* offset 24 */
-    int linedefined; /* offset 32 */
-    int currentline; /* offset 36 */
-    unsigned char nupvals; /* offset 40 */
-    unsigned char nparams; /* offset 41 */
-    unsigned char isvararg; /* offset 42 */
-    int protoid; /* offset 44 */
-    int bytecodeid; /* offset 48 */
-    void* userdata; /* offset 56 */
-    char ssbuf[256]; /* offset 64 */
-};
+    const char* name;      // (n)
+    const char* what;      // (s) `Lua', `C', `main', `tail'
+    const char* source;    // (s)
+    const char* short_src; // (s)
+    int linedefined;       // (s)
+    int currentline;       // (l)
+    int protoid;           // (p) globally unique (within VM) proto id; 0 for C functions
+    int bytecodeid;        // (p) proto index within its bytecode module; -1 for C functions
+    unsigned char nupvals; // (u) number of upvalues
+    unsigned char nparams; // (a) number of parameters
+    char isvararg;         // (a)
+    void* userdata; // only valid in lua_callhook
 
+    char ssbuf[LUA_IDSIZE];
+};
 
 typedef void (*lua_Coverage)(void* context, const char* function, int linedefined, int depth, const int* hits, size_t size);
 
@@ -750,68 +676,35 @@ LUA_API void lua_getcounters(lua_State* L, int funcindex, void* context, lua_Cou
  *
  * Note: interrupt is safe to set from an arbitrary thread but all other callbacks
  * can only be changed when the VM is not running any code */
-// 742 (cec3ad5889b447cf). cb lives at global_State+0x638, so global+N ==
-// cb+(N-0x638). Order follows the Achilles 742 dump, with its GUESS pair at
-// 0x58/0x60 swapped after IDA:
-//   cb+0x18 onallocate  - 28 sites in luau_execute call `[g+650h]` with tt as arg 6
-//   cb+0x20 useratom    - ScriptContext VM setup (0x4210A40) stores 0x42107E0 at g+0x658
-//   cb+0x28 userthread  - same setup stores 0x4210720 at g+0x660; that function
-//                         allocates the 0xB8 RobloxExtraSpace and writes L+0x80
-//   cb+0x40 onfree      - 14 sites call `[g+678h]` as f(L, block)
-//   cb+0x50 debugbreak  - LOP_BREAK decodes p->debuginsn then calls `[g+688h]`
-//   cb+0x58 interrupt   - 8 luau_execute sites call `[g+690h]` with rdx = -1, and
-//                         luaC_step (0x25B0430) calls it as f(L, 0) / f(L, gcstate)
-// The setup also stores 0x4210810 at cb+0x10 behind two flags; the dump's
-// guess for that slot (debugprotectederror) is unconfirmed. Remaining GUESS
-// slots are the dump's fallback order - every slot is an 8-byte function
-// pointer, so the layout holds either way, but do not hook one by its name.
-// 743 (7a0c6d10fcb34a2c): reordered again; non-GUESS slots from the Achilles 743
-// dump. Its panic/interrupt guess was swapped again (as on 742); verified in IDA:
-//   cb+0x60 interrupt - luaC_step (0x2642B60) calls `[g+698h]` as f(L, 0) and
-//                       f(L, gcstate); luau_execute calls it with rdx = -1
-//   cb+0x58 preresume - lua_resume path (0x2631100) calls `[g+690h]` as f(L)
-// The other GUESS slots (0x18/0x38/0x40/0x68) are still the dump's fallback order.
-// 744 (0.744.0.7441077): reordered again. Verified in IDA, cb at g+0x660:
-//   luau_execute LOP_BREAK calls [g+668h]          -> debugbreak 0x08
-//   lua_resume calls [g+690h] on entry, [g+670h] on exit
-//                                                  -> preresume 0x30, postresume 0x10
-//   luau_execute singlestep calls [g+678h]         -> debugstep 0x18
-//   inlined luaM_free in lapi calls [g+6A8h]       -> onfree 0x48
-//   inlined luaM_new in lapi calls [g+6C0h] with tt -> onallocate 0x60
-//   luaC_freeobj thread case calls [g+6B0h]        -> userthread 0x50
-//   luaC_step / VM interrupt sites call [g+6B8h]   -> interrupt 0x58
-//   lua_registerfinalizer path reads [g+6C8h]      -> userfinalizer 0x68
-// useratom, debugprotectederror and debuginterrupt follow the dumps (all three
-// 744 dumps agree); panic is unplaced, 0x28 is the only free slot.
-typedef struct lua_Callbacks
-{
-    void* userdata;                                                     /* 0x00 */
-    void (*debugbreak)(lua_State* L, lua_Debug* ar);                    /* 0x08 - verified */
-    void (*postresume)(lua_State* L);                                   /* 0x10 - verified */
-    void (*debugstep)(lua_State* L, lua_Debug* ar);                     /* 0x18 - verified */
-    int16_t(*useratom)(lua_State* L, const char* s, size_t l);          /* 0x20 - dump */
-    void (*panic)(lua_State* L, int errcode);                           /* 0x28 - GUESS */
-    void (*preresume)(lua_State* L);                                    /* 0x30 - verified */
-    void (*debugprotectederror)(lua_State* L);                          /* 0x38 - dump */
-    void (*debuginterrupt)(lua_State* L, lua_Debug* ar);                /* 0x40 - dump */
-    void (*onfree)(lua_State* L, void* block);                          /* 0x48 - verified */
-    void (*userthread)(lua_State* LP, lua_State* L);                    /* 0x50 - verified */
-    void (*interrupt)(lua_State* L, int gc);                            /* 0x58 - verified */
-    void (*onallocate)(lua_State* L, void* block, size_t osize, size_t nsize, unsigned char memcat, int tt, int tag); /* 0x60 - verified */
-    void (*userfinalizer)(lua_State* L, lua_State* co);                 /* 0x68 - verified */
-} lua_Callbacks;
-static_assert(sizeof(lua_Callbacks) == 0x70, "lua_Callbacks must be 112 bytes");
-static_assert(offsetof(lua_Callbacks, onallocate) == 0x60, "lua_Callbacks::onallocate moved");
-static_assert(offsetof(lua_Callbacks, useratom) == 0x20, "lua_Callbacks::useratom moved");
-static_assert(offsetof(lua_Callbacks, userthread) == 0x50, "lua_Callbacks::userthread moved");
-static_assert(offsetof(lua_Callbacks, onfree) == 0x48, "lua_Callbacks::onfree moved");
-static_assert(offsetof(lua_Callbacks, debugbreak) == 0x08, "lua_Callbacks::debugbreak moved");
-static_assert(offsetof(lua_Callbacks, interrupt) == 0x58, "lua_Callbacks::interrupt moved");
+
+ // Structure For Hash(f0ea5da9412f4e35)
+
+struct lua_Callbacks {
+    void* userdata; /* (0) (0x0) */
+    void (*onallocate)(lua_State* L, void* block, size_t osize, size_t nsize, uint8_t memcat, int tt, int tag); /* (8) (0x8) */
+    void (*debugprotectederror)(lua_State* L); // GUESS
+    void (*debuginterrupt)(lua_State* L, lua_Debug* ar); // GUESS
+    void (*userthread)(lua_State* LP, lua_State* L); /* (32) (0x20) */
+    int16_t(*useratom)(lua_State* L, const char* s, size_t l); /* (40) (0x28) */
+    void (*preresume)(lua_State* L); /* (48) (0x30) */
+    void (*debugstep)(lua_State* L, lua_Debug* ar); /* (56) (0x38) */
+    void (*postresume)(lua_State* L); /* (64) (0x40) */
+    void (*onfree)(lua_State* L, void* block); /* (72) (0x48) */
+    void (*userfinalizer)(lua_State* L, lua_State* co); /* (80) (0x50) */
+    void (*panic)(lua_State* L, int errcode); // GUESS
+    void (*interrupt)(lua_State* L, int gc);  // GUESS
+    void (*debugbreak)(lua_State* L, lua_Debug* ar); /* (104) (0x68) */
+};
+static_assert(sizeof(lua_Callbacks) == 112, "sizeof(lua_Callbacks) == 112");
 typedef struct lua_Callbacks lua_Callbacks;
 
 LUA_API lua_Callbacks* lua_callbacks(lua_State* L);
-#define lua_pushrawclosure(L, rawClosure) \
-setclvalue(L, L->top, rawClosure); \
+
+// Must be called after lua_newstate and before the state creates any additional objects
+// The VM makes no assumptions about the layout or structure of the caged heap
+// The VM does assume that the embedder will free any memory allocated if the main lua_State the cage is associated with is closed
+LUA_API void lua_setmemorycage(lua_State* L, lua_CageAlloc alloc, void* ud);
+
 /******************************************************************************
  * Copyright (c) 2019-2023 Roblox Corporation
  * Copyright (C) 1994-2008 Lua.org, PUC-Rio.  All rights reserved.

@@ -102,10 +102,6 @@
 #endif
 
 // number of valid Lua lightuserdata tags
-// 0.739: 128. The VM initializes lightuserdataname[] as exactly 128 slots
-// (0x41D0-0x45C8) with udatadirectfields immediately after at 0x45D0.
-// 738 used 258 - leaving it at 258 shifts every global_State field after
-// lightuserdataname by 0x410 (builtinPcall, ptrenckeynew, gcstats, ...).
 #ifndef LUA_LUTAG_LIMIT
 #define LUA_LUTAG_LIMIT 128
 #endif

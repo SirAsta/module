@@ -2,10 +2,9 @@
 // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
 #pragma once
 
-#include <cstddef> // offsetof, for the 738 layout guards
-
 #include "lua.h"
 #include "lcommon.h"
+#include <Offsets.hpp>
 
 /*
 ** Union of all collectible objects
@@ -16,43 +15,17 @@ typedef union GCObject GCObject;
 ** Common Header for all collectible objects (in macro form, to be included in other objects)
 */
 // clang-format off
-// Roblox 0.740 order: tt, marked, memcat - marked and memcat swapped back
-// relative to 739.
-// Verified in IDA at 0x42A6D4F, the thread barrier ahead of a resume:
-//   movzx eax, byte [L+1] ; test al, 4 ; jz ...    (black bit)
-//   and al, 0FBh ; mov [L+1], al                   (clear black)
-//   mov rax, [g+38h] ; mov [L+50h], rax ; mov [g+38h], L   (relink grayagain)
-// so `marked` is byte1 and `memcat` is byte2.
-// Getting this wrong puts the type tag in the byte Roblox reads as something
-// else - lua_newthread appears to succeed, then luaL_sandboxthread faults the
-// moment a table built that way is used.
-// 02c37bc reordered the GC object header: memcat now leads and tt/marked shift
-// up one. Verified in IDA, luaB_getmetatable (0x269ED80), which inlines
-// luaC_threadbarrier:
-//     v4 = *(BYTE*)(L + 2);
-//     if ((v4 & 4) != 0) {            // isblack: marked & (1 << BLACKBIT)
-//         *(BYTE*)(L + 2) = v4 & 0xFB;          // black2gray: clear that bit
-//         *(QWORD*)(L + 0x10) = *(QWORD*)(g + 0x40);   // linkgclist -> grayagain
-//         *(QWORD*)(g + 0x40) = L;
-//     }
-// so `marked` is at +2 and `tt` at +1. Getting this wrong silently corrupts
-// every ttype()/GC-colour test in the VM rather than failing loudly.
-// 742 (cec3ad5889b447cf): back to tt, marked, memcat. Verified in IDA - every
-// GC allocation site (e.g. the table constructor at 0x258CCA7) does
-//   mov byte [o], 7 ; movzx ecx, byte [g] ; and cl, 3 ; mov [o+1], cl
-//   movzx ebp, byte [L+4] ; mov [o+2], bpl
-// i.e. tt +0, marked = currentwhite +1, memcat = L->activememcat +2; and the
-// inlined thread barrier tests `byte [L+1] & 4`.
-// 743 (7a0c6d10fcb34a2c): tt, memcat, marked per the Achilles 743 dump (the dump
-// detects this per build - 741 had memcat first). Not yet checked in IDA.
-// 744 (0.744.0.7441077): marked, memcat, tt. Verified in IDA - lua_newstate
-// writes marked=white at L+0 and tt=LUA_TTHREAD at L+2, every closure
-// constructor writes `byte [cl+2], 8`, and luaC_traversestack tests
-// `byte [uv], 3` (iswhite) on open upvalues.
+//#define CommonHeader \
+//     uint8_t tt; uint8_t marked; uint8_t memcat
+
+// Define For Hash(f0ea5da9412f4e35)
+
 #define CommonHeader \
-    uint8_t marked; /* offset 0 */ \
-    uint8_t memcat; /* offset 1 */ \
-    uint8_t tt; /* offset 2 */
+    uint8_t marked; \
+    uint8_t tt; \
+    uint8_t memcat
+
+
 // clang-format on
 
 /*
@@ -322,100 +295,35 @@ typedef TValue* StkId; // index to stack elements
 /*
 ** String headers for string table
 */
-struct TString
-{
-    CommonHeader;                                   /* 0x00 */
-    unsigned char gap_03[0x1];                      /* 0x03 */
-    uint16_t atomflag;                              /* 0x04 */
-    int16_t atom;                                   /* 0x06 */
-    TString* next;                                  /* 0x08 */
-    TSTRING_HASH_ENC<unsigned int> hash;            /* 0x10 */
-    unsigned int len;                               /* 0x14 */
-    char data[1];                                   /* 0x18 */
+
+// Structure For Hash(f0ea5da9412f4e35)
+
+struct TString {
+    CommonHeader; /* (0) (0x0) */
+    uint16_t atomflag; /* (4) (0x4) */
+    int16_t atom; /* (6) (0x6) */
+    TString* next; /* (8) (0x8) */
+    TSTRING_HASH_ENC<unsigned int> hash; /* (16) (0x10) */
+    unsigned int len; /* (20) (0x14) */
+    char data[1]; /* (24) (0x18) */
 };
+static_assert(sizeof(TString) == 32, "sizeof(TString) == 32");
 
 
 #define getstr(ts) (ts)->data
 #define svalue(o) getstr(tsvalue(o))
 
-typedef struct TKey
-{
-    ::Value value;
-    int extra[LUA_EXTRA_SIZE];
-    unsigned tt : 4;
-    int next : 28; // for chaining
-} TKey;
+// Structure For Hash(f0ea5da9412f4e35)
 
-typedef struct LuaNode
-{
-    TValue val;
-    TKey key;
-} LuaNode;
-
-// 0.739 byte fields verified in IDA (luau_execute), NOT taken from the struct
-// dump - the dump has tmcache and safeenv swapped:
-//   +0x03 safeenv   : GETIMPORT/GETGLOBAL test `byte [cl->env+3], 0`
-//   +0x05 tmcache   : fasttm tests `byte [mt+5], 1<<event`, and luaH_getstr
-//                     sets `or byte [h+5], 1` on a __index miss
-//   +0x06 lsizenode : node lookup does `1 << byte [h+6]`
-//   +0x07 readonly  : SETTABLEKS fast path checks `byte [h+7], 0` before writing
-// 0.740: the node/array/gclist tail moved relative to 739 (node 0x20 -> 0x18,
-// array 0x28 -> 0x20, gclist 0x18 -> 0x28). The tmcache/safeenv swap is still
-// there: verified at runtime 2026-09-29 - clearing +0x05 left FASTCALL active,
-// Roblox's own getfenv turned it off, and +0x05 cannot be readonly (sandboxed
-// scripts write their globals fine with it set).
-// 02c37bc: re-verified in IDA for this build, so the 740 notes above no longer
-// apply - both the byte block and the metatable/gclist pair moved.
-//   luaB_next (0x26A4530) does `1 << byte [h+4]`        -> lsizenode 0x04
-//                         reads `[h+8]`                 -> sizearray 0x08
-//                         reads `[h+18h]` / `[h+20h]`   -> node 0x18 / array 0x20
-//   luaB_getmetatable (0x269ED80) LUA_TTABLE case reads `[h+28h]`
-//                                                       -> metatable 0x28
-// so metatable and gclist are swapped relative to 740 (metatable 0x10 -> 0x28,
-// gclist 0x28 -> 0x10), and the byte order matches this build's struct dump.
-// 742 (cec3ad5889b447cf): byte block and tail moved again; matches the Achilles
-// 742 dump. Verified in IDA for this build:
-//   luaB_next (0x25ED9A0)      `1 << byte [h+5]`, `[h+10h]` -> lsizenode 0x05, node 0x10
-//   luaB_getmetatable (0x25E81F0) LUA_TTABLE reads `[h+20h]` -> metatable 0x20
-//   luaB_setfenv/getfenv       clear `byte [h+7]`            -> safeenv 0x07
-//   table ctor (0x258CCA7)     stores dummynode, mt at +0x20
-// 743 (7a0c6d10fcb34a2c): byte block and tail moved again; taken from the
-// Achilles 743 dump, not yet checked in IDA.
-// 744 (0.744.0.7441077): verified in IDA. The 744 dumps disagree on the
-// safeenv/readonly pair (struct(1).hpp has them swapped); the binary says:
-//   every luaG_readonlyerror (0x26B6D60) site tests `byte [h+7], 0` -> readonly 0x07
-//   the API setter at 0x268D990 writes `byte [h+4]`                 -> safeenv 0x04
-//   lua_unref's registry lookup: `1 << byte [h+6]`, `[h+20h]` node,
-//   `[h+18h]` array, `[h+8]` sizearray; traversestack gclist `[h+28h]`.
-struct LuaTable
-{
-    CommonHeader;                                   /* 0x00 */
-    unsigned char tmcache;                          /* 0x03 */
-    unsigned char safeenv;                          /* 0x04 */
-    unsigned char nodemask8;                        /* 0x05 */
-    unsigned char lsizenode;                        /* 0x06 */
-    unsigned char readonly;                         /* 0x07 */
-    int sizearray;                                  /* 0x08 */
-    union                                           /* 0x0C */
-    {
-        int lastfree;
-        int aboundary;
-    };
-    LuaTable* metatable;                            /* 0x10 */
-    TValue* array;                                  /* 0x18 */
-    LuaNode* node;                                  /* 0x20 */
-    GCObject* gclist;                               /* 0x28 */
+struct Udata {
+    CommonHeader; /* (0) (0x0) */
+    unsigned char tag; /* (3) (0x3) */
+    int len; /* (4) (0x4) */
+    UDATA_META_ENC<struct LuaTable*> metatable; /* (8) (0x8) */
+    char data[1]; /* (16) (0x10) */
 };
-// (asserts for this struct live in the consolidated block further down)
 
-struct Udata
-{
-    CommonHeader; /* offset 0 */
-    unsigned char tag; /* offset 3 */
-    int len; /* offset 4 */
-    UDATA_META_ENC<struct LuaTable*> metatable; /* offset 8 */
-    char data[1]; /* offset 16 */
-};
+static_assert(sizeof(Udata) == 24, "sizeof(Udata) == 24");
 
 typedef struct LuauBuffer
 {
@@ -460,8 +368,6 @@ struct FeedbackVectorSlot
             uint32_t hits;
         } call_target;
 
-        // 743 added the CONSTRUCT slot. Both arms are 12 bytes, so the
-        // union - and the slot - keep the size the client allocates.
         struct
         {
             uint32_t shape;
@@ -471,90 +377,67 @@ struct FeedbackVectorSlot
     };
 };
 
+enum ProtoExecFlag
+{
+    PEF_EXECLOCKED = 1 << 0,  // function will no longer be examined by custom execution
+    PEF_DEBUGLOCKED = 1 << 1, // bytecode can have breakpoints in it
+};
+
 /*
 ** Function Prototypes
 */
-// LocVar is defined further down, but Proto::locvars needs the name here.
-// Without this the template argument fails to parse and every later use of
-// Closure/Proto reports bogus "is not a member" errors.
-struct LocVar;
-
 // clang-format off
-struct Proto
-{
-    // 02c37bc layout. Reordered again against 740 - the pointer block and the
-    // whole int tail both moved, so none of the 740 notes carry over. Deltas:
-    //   flags      0x06 -> 0x03    is_vararg  0x03 -> 0x04
-    //   numparams  0x04 -> 0x05    nups       0x05 -> 0x06
-    //   source     0x18 -> 0x08    locvars    0x58 -> 0x10
-    //   lineinfo   0x10 -> 0x18    debugname  0x60 -> 0x20
-    //   gclist     0x78 -> 0x30    userdata   0x50 -> 0x38
-    //   typeinfo   0x08 -> 0x40    k          0x40 -> 0x48
-    //   code       0x48 -> 0x50    debuginsn  0x68 -> 0x58
-    //   execdata   0x30 -> 0x60    exectarget 0x38 -> 0x68
-    //   abslineinfo 0x20 -> 0x70   codeentry  0x80 -> 0x78
-    //   upvalues   0x70 -> 0x80
-    //
-    // 742 (cec3ad5889b447cf): reordered again; matches the Achilles 742 dump.
-    // Verified in IDA for this build:
-    //   luau_execute entry: `mov r10, [p+20h]`            -> k 0x20
-    //   LOP_BREAK: `sub rax, [p+28h]` / debuginsn at p+0x80 (VMValue2)
-    //                                                     -> code 0x28, debuginsn 0x80
-    //   capability read (0x4185DD0): `p+0x40`, XOR decode -> userdata 0x40 (VMValue3)
-    //
-    // 743 (7a0c6d10fcb34a2c): reordered again; taken from the Achilles 743 dump,
-    // not yet checked in IDA. k / code / userdata kept their 742 offsets.
-    // 744 (0.744.0.7441077): close to upstream order again; all three 744
-    // dumps agree. Verified in IDA: luaF_getlocal reads locvars `[p+20h]`
-    // (VMValue1, 0x18-byte LocVar) and sizelocvars `[p+0ACh]`; luaG_getline
-    // reads lineinfo `[p+40h]` (XOR, VMValue3), abslineinfo `p+58h - [p+58h]`
-    // (VMValue2), linegaplog2 `byte [p+9Ch]`; luaC_traverseproto reads source
-    // `[p+8]` (VMValue1), upvalues `[p+10h]` (XOR), debugname `[p+60h]`, and
-    // p `[p+30h]` raw (the Hyperion dump's PROTO_P_ENC is plain this build);
-    // luaF_newproto stores debuginsn as `-&field` (VMValue4); luau_execute
-    // loads k `[p+48h]` / code `[p+50h]`.
-    CommonHeader;                                   /* 0x00 */
-    unsigned char nups;                             /* 0x03 */
-    unsigned char is_vararg;                        /* 0x04 */
-    unsigned char maxstacksize;                     /* 0x05 */
-    unsigned char numparams;                        /* 0x06 */
-    unsigned char flags;                            /* 0x07 */
-    PROTO_SOURCE_ENC<TString*> source;              /* 0x08 */
-    PROTO_UPVALUES_ENC<TString**> upvalues;         /* 0x10 */
-    GCObject* gclist;                               /* 0x18 */
-    PROTO_LOCVARS_ENC<struct LocVar*> locvars;      /* 0x20 */
-    unsigned int* codeentry;                        /* 0x28 */
-    Proto** p;                                      /* 0x30 */
-    PROTO_USERDATA_ENC<void*> userdata;             /* 0x38 */
-    PROTO_LINEINFO_ENC<unsigned char*> lineinfo;    /* 0x40 */
-    TValue* k;                                      /* 0x48 */
-    unsigned int* code;                             /* 0x50 */
-    PROTO_ABSLINEINFO_ENC<int*> abslineinfo;        /* 0x58 */
-    PROTO_DEBUGNAME_ENC<TString*> debugname;        /* 0x60 */
-    PROTO_DEBUGINSN_ENC<unsigned char*> debuginsn;  /* 0x68 */
-    void* execdata;                                 /* 0x70 */
-    uintptr_t exectarget;                           /* 0x78 */
-    PROTO_TYPEINFO_ENC<unsigned char*> typeinfo;    /* 0x80 */
-    int sizetypeinfo;                               /* 0x88 */
-    int sizeupvalues;                               /* 0x8C */
-    int linedefined;                                /* 0x90 */
-    int sizek;                                      /* 0x94 */
-    int bytecodeid;                                 /* 0x98 */
-    int linegaplog2;                                /* 0x9C */
-    int sizelineinfo;                               /* 0xA0 */
-    int sizecode;                                   /* 0xA4 */
-    int sizep;                                      /* 0xA8 */
-    int sizelocvars;                                /* 0xAC */
-    struct FeedbackVectorSlot* feedbackvec;         /* 0xB0 */
-    int feedbackvecsize;                            /* 0xB8 */
-    int funid;                                      /* 0xBC */
-    Proto* optimized;                               /* 0xC0 */
-    Proto* deoptimized;                             /* 0xC8 */
-    uint64_t cost;                                  /* 0xD0 */
-};
-// clang-format on
 
-// (asserts for this struct live in the consolidated block further down)
+// Structure For Hash(f0ea5da9412f4e35)
+
+struct Proto {
+    CommonHeader; /* (0) (0x0) */
+    unsigned char is_vararg; /* (3) (0x3) */
+    unsigned char maxstacksize; /* (4) (0x4) */
+    unsigned char nups; /* (5) (0x5) */
+    unsigned char flags; /* (6) (0x6) */
+    unsigned char numparams; /* (7) (0x7) */
+    void* execdata; /* (8) (0x8) */
+    uintptr_t exectarget; /* (16) (0x10) */
+    uint8_t execflags; /* (24) (0x18) */
+    char gap_0[0x7];
+    PROTO_DEBUGNAME_ENC<TString*> debugname; /* (32) (0x20) */
+    uint32_t execcount; /* (40) (0x28) */
+    char gap_1[0x4];
+    PROTO_TYPEINFO_ENC<unsigned char*> typeinfo; /* (48) (0x30) */
+    GCObject* gclist; /* (56) (0x38) */
+    PROTO_LINEINFO_ENC<unsigned char*> lineinfo; /* (64) (0x40) */
+    PROTO_DEBUGINSN_ENC<unsigned char*> debuginsn; /* (72) (0x48) */
+    Proto** p; /* (80) (0x50) */
+    PROTO_SOURCE_ENC<TString*> source; /* (88) (0x58) */
+    TValue* k; /* (96) (0x60) */
+    unsigned int* code; /* (104) (0x68) */
+    PROTO_ABSLINEINFO_ENC<int*> abslineinfo; /* (112) (0x70) */
+    PROTO_LOCVARS_ENC<struct LocVar*> locvars; /* (120) (0x78) */
+    PROTO_USERDATA_ENC<uint64_t*> userdata; /* (128) (0x80) */
+    PROTO_UPVALUES_ENC<TString**> upvalues; /* (136) (0x88) */
+    unsigned int* codeentry; /* (144) (0x90) */
+    int sizeupvalues; /* (152) (0x98) */
+    int sizelocvars; /* (156) (0x9C) */
+    int sizep; /* (160) (0xA0) */
+    int linedefined; /* (164) (0xA4) */
+    int sizecode; /* (168) (0xA8) */
+    int sizek; /* (172) (0xAC) */
+    int sizelineinfo; /* (176) (0xB0) */
+    int bytecodeid; /* (180) (0xB4) */
+    int sizetypeinfo; /* (184) (0xB8) */
+    int linegaplog2; /* (188) (0xBC) */
+    struct FeedbackVectorSlot* feedbackvec; /* (192) (0xC0) */
+    int feedbackvecsize; /* (200) (0xC8) */
+    int funid; /* (204) (0xCC) */
+    Proto* optimized; /* (208) (0xD0) */
+    Proto* deoptimized; /* (216) (0xD8) */
+    uint64_t cost; /* (224) (0xF0) */
+    void* newmember; /* (232) (0xE8) */
+};
+static_assert(sizeof(Proto) == 240, "sizeof(Proto) == 240");
+
+// clang-format on
 
 typedef struct LocVar
 {
@@ -597,49 +480,31 @@ typedef struct UpVal
 ** Closures
 */
 
-struct Closure
-{
-    // 02c37bc: preload and isC swapped back (preload 0x03, isC 0x06). Verified in
-    // IDA - luaB_getfenv (0x269F940) takes the LUA_TFUNCTION branch on
-    // `byte [cl+6]`, so isC is at 0x06 on this build.
-    // 742: isC back at 0x03 (luaB_getfenv 0x25E8DA0 tests `byte [cl+3]`), and the
-    // C union is (f, cont, debugname) again; matches the Achilles 742 dump.
-    // 743: nupvalues/stacksize swapped and the C union is (f, debugname, cont);
-    // from the Achilles 743 dump, not yet checked in IDA.
-    // 744: C union is (debugname, cont, f). Verified in IDA - luau_execute's
-    // C-call path does `mov rax, [cl+28h]` / `mov rcx, L` / icall, and
-    // lua_pushcclosurek (0x269DC..) stores cont as XOR at +0x20 and the
-    // interned debugname raw at +0x18 (the Hyperion dump's
-    // CLOSURE_DEBUGNAME_ENC is plain this build).
-    CommonHeader;                                   /* 0x00 */
-    unsigned char isC;                              /* 0x03 */
-    unsigned char preload;                          /* 0x04 */
-    unsigned char nupvalues;                        /* 0x05 */
-    unsigned char stacksize;                        /* 0x06 */
-    unsigned char gap_07[0x1];                      /* 0x07 */
-    GCObject* gclist;                               /* 0x08 */
-    struct LuaTable* env;                           /* 0x10 */
-    union                                           /* 0x18 */
-    {
-        struct
-        {
-            struct Proto* p;                        /* 0x18 */
-            TValue uprefs[1];                       /* 0x20 */
-        } l;
-        // The C-closure order REVERSED against 740: it was (f, cont, debugname),
-        // it is now (debugname, cont, f). Environment.cpp swaps c.f on the game's
-        // __index/__namecall at setup, so if inject starts crashing immediately
-        // after a client update, re-check this union before anything else.
-        struct
-        {
-            TString* debugname;                     /* 0x18 */
-            CLOSURE_CONT_ENC<lua_Continuation> cont;/* 0x20 */
-            lua_CFunction f;                        /* 0x28 */
-            TValue upvals[1];                       /* 0x30 */
+// Structure For Hash(f0ea5da9412f4e35)
+
+struct Closure {
+    CommonHeader; /* offset (0) (0x0) */
+    unsigned char preload; /* offset (3) (0x3) */
+    unsigned char nupvalues; /* offset (4) (0x4) */
+    unsigned char isC; /* offset (5) (0x5) */
+    unsigned char stacksize; /* offset (6) (0x6) */
+    char gap_0[0x1];
+    GCObject* gclist; /* offset (8) (0x8) */
+    LuaTable* env; /* offset (16) (0x10) */
+    union {
+        struct {
+            TString* debugname; /* (0) (0x0) */
+            CLOSURE_CONT_ENC<lua_Continuation> cont; /* (8) (0x8) */
+            lua_CFunction f; /* (16) (0x10) */
+            TValue upvals[1]; /* (24) (0x18) */
         } c;
+        struct {
+            Proto* p; /* (0) (0x0) */
+            TValue uprefs[1]; /* (8) (0x8) */
+        } l;
     };
 };
-// (asserts for this struct live in the consolidated block further down)
+static_assert(sizeof(Closure) == 64, "sizeof(Closure) == 64");
 
 #define iscfunction(o) (ttype(o) == LUA_TFUNCTION && clvalue(o)->isC)
 #define isLfunction(o) (ttype(o) == LUA_TFUNCTION && !clvalue(o)->isC)
@@ -647,6 +512,20 @@ struct Closure
 /*
 ** Tables
 */
+
+typedef struct TKey
+{
+    ::Value value;
+    int extra[LUA_EXTRA_SIZE];
+    unsigned tt : 4;
+    int next : 28; // for chaining
+} TKey;
+
+typedef struct LuaNode
+{
+    TValue val;
+    TKey key;
+} LuaNode;
 
 // copy a value into a key
 #define setnodekey(L, node, obj) \
@@ -671,6 +550,51 @@ struct Closure
     }
 
 // clang-format off
+//typedef struct LuaTable
+//{
+//    CommonHeader;
+//
+//    uint8_t tmcache;    // 1<<p means tagmethod(p) is not present
+//    uint8_t readonly;   // bit 0 - prohibit writes to table, bit 1 - array contains a metamethod cache
+//    uint8_t safeenv;    // environment doesn't share globals with other scripts
+//    uint8_t lsizenode;  // log2 of size of `node' array
+//    uint8_t nodemask8;  // (1<<lsizenode)-1, truncated to 8 bits
+//
+//    int sizearray; // size of `array' array
+//    union
+//    {
+//        int lastfree;  // any free position is before this position
+//        int aboundary; // negated 'boundary' of `array' array; iff aboundary < 0
+//    };
+//
+//    struct LuaTable* metatable;
+//    TValue* array;  // array part
+//    LuaNode* node;
+//    GCObject* gclist;
+//} LuaTable;
+
+// Structure For Hash(f0ea5da9412f4e35)
+
+struct LuaTable {
+    CommonHeader; /* (0) (0x0) */
+    uint8_t tmcache; /* (3) (0x3) */
+    uint8_t safeenv; /* (4) (0x4) */
+    uint8_t nodemask8; /* (5) (0x5) */
+    uint8_t readonly; /* (6) (0x6) */
+    uint8_t lsizenode; /* (7) (0x7) */
+    int sizearray; /* (8) (0x8) */
+    union {
+        int lastfree;
+        int aboundary;
+    }; /* (12) (0xC) */
+    LuaTable* metatable; /* (16) (0x10) */
+    GCObject* gclist; /* (24) (0x18) */
+    LuaNode* node; /* (32) (0x20) */
+    TValue* array; /* (40) (0x28) */
+};
+
+static_assert(sizeof(LuaTable) == 48, "sizeof(LuaTable) == 48");
+
 // clang-format on
 
 typedef struct LuauClass
@@ -681,51 +605,57 @@ typedef struct LuauClass
 
     TString* name;
 
-    // Used to match feedback vector construction slots.
-    // Handed out from global_State::lastclassid (0x4AF4 in the 743 dump).
+    // Used to match feedback vector construction slots
     uint32_t id;
 
     // The superclass of this class. NULL if this class doesn't inherit.
     LuauClass* super;
 
-    // Mapping from offset to static members (only methods for now).
+    // Mapping from offset to static members (only methods for now). Private members at the end.
     TValue* staticmembers;
+    // We store a pointer to the private static members separately as an optimization to avoid computing an overall offset into static members.
+    TValue* privatestaticmembers;
 
-    // Mapping from member name to offset.
+    // Mapping from public member name to offset.
     // For static members, subtracting numberofinstancemembers from the offset gives the actual index into staticmembers.
     LuaTable* memberstooffset;
 
-    // Mapping from offset to member name. Instance member offsets are stored before static member offsets.
+    // Mapping from offset to member name. Instance member offsets are stored before static member offsets. Offsets corresponding to private
+    // fields are NULL, and there are no entries for private static members.
     TString** offsettomember;
 
-    // Metatable for this *class object*. At time of writing this only contains
-    // __call, but we may add more metamethods to class objects in the future.
+    // Metatable for this *class object*. At time of writing this only contains __call
     LuaTable* metatable;
 
     // Metatable for instances of this class. NULL until the first metamethod
     // is added via luaR_addclassmember.
     LuaTable* instancemetatable;
 
-    // Number of instance members that we expect instances of this class object
-    // to have.
+    // Number of public and private instance members that we expect instances of this class object to have.
     uint32_t numberofinstancemembers;
 
-    // Total number of members that we expect this class object to have between
-    // instance and static members.
+    // Total number of members that we expect this class object to have between instance and static members.
     //
     // We store this number as an optimization. It's pretty rare that we need
     // to reference the specific number of static members, but it's very common
     // to reference the total number of members (for validating hot paths in
     // the interpreter) and the number of instance members (branching on
     // instance or static members, creating class instances).
-    uint32_t numberofallmembers;
+    uint32_t numberofmembers;
+
+    uint32_t numberofprivatefields;
+    // If this class inherits, its ancestors' private fields come before this class's, so we track where its own private fields start.
+    uint32_t ownprivatefieldsstart;
+
+    uint8_t numberofprivatestaticmembers;
 
     // Can this class be extended?
     bool isopen;
 
     // True if this class or any of its ancestors defines an __init method.
-    // The default constructor errors if this is true, which works because
-    // the default constructor is overridden if a class defines __init.
+    // If a class's ancestors define an __init method, it must itself also define an __init method.
+    // We cannot determine this statically, so we track it here to error at runtime if the invariant is violated.
+    // The default constructor errors if this is true, which works because the default constructor is overridden if a class defines an __init method.
     bool hasuserinitinchain;
 } LuauClass;
 
@@ -738,14 +668,13 @@ typedef struct LuauObject
     // The class object that this value is an instance of.
     LuauClass* lclass;
 
-    // The number of members that this instance contains. We need this in order
-    // to free ourselves if we got swept in the same GC cycle as our class
+    // The number of members that this instance contains. We need these in order to free ourselves if we get swept in the same GC cycle as our class
     // pointer.
     uint32_t numberofmembers;
 
-    // The fields of this instance.
+    // The fields of this instance. Members are ordered according to inheritance chain, with base classes coming first. For each class, public members
+    // come first, then privates.
     TValue* members;
-
 } LuauObject;
 
 /*
@@ -755,12 +684,10 @@ typedef struct LuauObject
 
 #define twoto(x) ((int)(1 << (x)))
 #define sizenode(t) (twoto((t)->lsizenode))
-
-// Metamethod cache: when readonly bit 1 is set the table carries a cache of
-// TM_* slots laid out *below* array[0], so getmetacache indexes backwards.
-// Pure accessors over existing LuaTable fields - no layout impact.
 #define hasmetacache(t) (((t)->readonly & 2) != 0)
 #define getmetacache(t, event) ((t)->array - (1 + (event)))
+
+//#define luaO_nilobject (&luaO_nilobject_)
 
 #define luaO_nilobject reinterpret_cast<TValue*>(Offsets::Luau::LuaO_NilObject)
 
@@ -776,77 +703,3 @@ LUAI_FUNC int luaO_str2l(const char* s, int64_t* result, int base = 10);
 LUAI_FUNC const char* luaO_pushvfstring(lua_State* L, const char* fmt, va_list argp);
 LUAI_FUNC const char* luaO_pushfstring(lua_State* L, const char* fmt, ...);
 LUAI_FUNC const char* luaO_chunkid(char* buf, size_t buflen, const char* source, size_t srclen);
-
-
-// Size guards for the member types that global_State / LuaTable are built from.
-// Three separate 738 bugs (RobloxExtraSpace, lua_Callbacks, stringtable) were
-// member types inherited from the 737 headers rather than re-derived, and two
-// of them had the right sizeof so the offsetof asserts never fired. Pin sizes
-// as well as offsets.
-//
-// TValue 16 - global_State has pseudotemp at 0x608 and registry at 0x618 (739).
-// LuaNode 32 - TValue + TKey; LuaTable::node is indexed by this stride, so a
-// wrong size sends every hash lookup to the wrong slot.
-static_assert(sizeof(TValue) == 0x10, "TValue must be 16 bytes");
-static_assert(sizeof(TKey) == 0x10, "TKey must be 16 bytes");
-static_assert(sizeof(LuaNode) == 0x20, "LuaNode must be 32 bytes");
-static_assert(offsetof(LuaNode, val) == 0x0, "LuaNode::val moved");
-static_assert(offsetof(LuaNode, key) == 0x10, "LuaNode::key moved");
-
-// LuaTable layout, 02c37bc, verified in IDA for this build:
-//   luaB_next (0x26A4530): `1 << byte [h+4]`      -> lsizenode 0x04
-//                          `[h+8]`                -> sizearray 0x08
-//                          `[h+18h]` / `[h+20h]`  -> node 0x18, array 0x20
-//   luaB_getmetatable (0x269ED80) LUA_TTABLE case reads `[h+28h]`
-//                                                 -> metatable 0x28
-// 743 values from the Achilles 743 dump; see the struct comments above.
-static_assert(offsetof(GCheader, tt) == 0x2, "CommonHeader::tt moved");
-static_assert(offsetof(GCheader, marked) == 0x0, "CommonHeader::marked moved");
-static_assert(offsetof(GCheader, memcat) == 0x1, "CommonHeader::memcat moved");
-
-static_assert(offsetof(LuaTable, tmcache) == 0x3, "LuaTable::tmcache moved");
-static_assert(offsetof(LuaTable, readonly) == 0x7, "LuaTable::readonly moved");
-static_assert(offsetof(LuaTable, lsizenode) == 0x6, "LuaTable::lsizenode moved");
-static_assert(offsetof(LuaTable, nodemask8) == 0x5, "LuaTable::nodemask8 moved");
-static_assert(offsetof(LuaTable, safeenv) == 0x4, "LuaTable::safeenv moved");
-static_assert(offsetof(LuaTable, sizearray) == 0x8, "LuaTable::sizearray moved");
-static_assert(offsetof(LuaTable, node) == 0x20, "LuaTable::node moved");
-static_assert(offsetof(LuaTable, array) == 0x18, "LuaTable::array moved");
-static_assert(offsetof(LuaTable, metatable) == 0x10, "LuaTable::metatable moved");
-static_assert(offsetof(LuaTable, gclist) == 0x28, "LuaTable::gclist moved");
-static_assert(sizeof(LuaTable) == 0x30, "LuaTable must be 48 bytes");
-
-static_assert(sizeof(Udata) == 0x18, "Udata must be 24 bytes");
-
-static_assert(offsetof(Proto, locvars) == 0x20, "Proto::locvars moved");
-static_assert(offsetof(Proto, k) == 0x48, "Proto::k moved");
-static_assert(offsetof(Proto, code) == 0x50, "Proto::code moved");
-static_assert(offsetof(Proto, source) == 0x08, "Proto::source moved");
-static_assert(offsetof(Proto, userdata) == 0x38, "Proto::userdata moved");
-static_assert(offsetof(Proto, p) == 0x30, "Proto::p moved");
-static_assert(offsetof(Proto, upvalues) == 0x10, "Proto::upvalues moved");
-static_assert(offsetof(Proto, debuginsn) == 0x68, "Proto::debuginsn moved");
-static_assert(offsetof(Proto, lineinfo) == 0x40, "Proto::lineinfo moved");
-static_assert(offsetof(Proto, abslineinfo) == 0x58, "Proto::abslineinfo moved");
-static_assert(offsetof(Proto, debugname) == 0x60, "Proto::debugname moved");
-static_assert(offsetof(Proto, linegaplog2) == 0x9C, "Proto::linegaplog2 moved");
-static_assert(offsetof(Proto, sizelocvars) == 0xAC, "Proto::sizelocvars moved");
-static_assert(offsetof(Proto, sizecode) == 0xA4, "Proto::sizecode moved");
-static_assert(offsetof(Proto, sizek) == 0x94, "Proto::sizek moved");
-static_assert(sizeof(Proto) == 0xD8, "Proto must be 216 bytes");
-
-static_assert(offsetof(Closure, isC) == 0x3, "Closure::isC moved");
-static_assert(offsetof(Closure, nupvalues) == 0x5, "Closure::nupvalues moved");
-static_assert(offsetof(Closure, env) == 0x10, "Closure::env moved");
-static_assert(offsetof(Closure, l.p) == 0x18, "Closure::l.p moved");
-static_assert(offsetof(Closure, c.f) == 0x28, "Closure::c.f moved");
-static_assert(offsetof(Closure, c.debugname) == 0x18, "Closure::c.debugname moved");
-static_assert(offsetof(Closure, c.cont) == 0x20, "Closure::c.cont moved");
-static_assert(sizeof(Closure) == 0x40, "Closure must be 64 bytes");
-
-// TString, measured from global->tmname[0] = Roblox's own "__index":
-//   +0x14 len = 7 and +0x18 data = "__index"
-static_assert(offsetof(TString, next) == 0x8, "TString::next moved");
-static_assert(offsetof(TString, hash) == 0x10, "TString::hash moved");
-static_assert(offsetof(TString, len) == 0x14, "TString::len moved");
-static_assert(offsetof(TString, data) == 0x18, "TString::data moved");
