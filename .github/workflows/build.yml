@@ -14,8 +14,11 @@ jobs:
 
       - uses: microsoft/setup-msbuild@v2
 
-      - name: Build
-        run: msbuild SkidBase.sln /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
+      - name: Build DLL
+        run: msbuild SkidBase\SkidBase.vcxproj /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
+
+      - name: Build UI
+        run: msbuild UI\UI.csproj /m /p:Configuration=Release /p:Platform=AnyCPU /verbosity:minimal
 
       - uses: actions/upload-artifact@v4
         with:
