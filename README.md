@@ -12,6 +12,11 @@ A Roblox executor targeting the latest client version.
 - added ui
 - added injector
 - fixed some stuff
+- updated offsets and structs
+- updated luau
+- renamed dll to skid.dll
+- organized project folders
+- added errors on failed execute in ui
 
 ## Credits
 
